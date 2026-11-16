@@ -1,0 +1,205 @@
+{% extends "base.html" %}
+{% block title %}Registers{% endblock %}
+{% block content %}
+{% set s = a.summary %}
+
+<div class="page-head">
+  <div>
+    <h1>4 · Registers</h1>
+    <p class="sub">The standing lists a peer review asks for. Kept current as the firm works, so the questionnaire's client and fee list is produced, not compiled.</p>
+  </div>
+</div>
+
+{# ================= assurance register ================= #}
+<section aria-labelledby="ar-h" class="grid">
+  <div class="section-head">
+    <div><h2 id="ar-h" style="font-size:20px">Assurance engagement register</h2>
+    <p>Every assurance client with the services rendered and fees. This is the list due within 15 days of the reviewer's consent.</p></div>
+  </div>
+
+  <div class="grid kpis">
+    <div class="kpi"><div class="kpi-label">Engagements</div><div class="kpi-value">{{ s.total_engagements }}</div></div>
+    <div class="kpi"><div class="kpi-label">Total fees</div><div class="kpi-value">{{ s.total_fees|inr }}</div></div>
+    <div class="kpi {{ 'alert' if s.engagements_missing_fee }}">
+      <div class="kpi-label">Missing fee</div><div class="kpi-value">{{ s.engagements_missing_fee }}</div>
+      {% if s.engagements_missing_fee %}<div class="kpi-note">Fee not recorded. Totals exclude it.</div>{% endif %}
+    </div>
+    <div class="kpi {{ 'alert' if without_udin }}">
+      <div class="kpi-label">Without UDIN</div><div class="kpi-value">{{ without_udin }}</div>
+      {% if without_udin %}<div class="kpi-note">Report not yet signed or UDIN not recorded.</div>{% endif %}
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Audits per member</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Partner</th><th class="num">Engagements</th><th class="num">Fees</th></tr></thead>
+        <tbody>
+        {% for m in s.audits_per_member %}
+          <tr><td>{{ m.partner }}</td><td class="num">{{ m.engagements }}</td><td class="num">{{ m.total_fees|inr }}</td></tr>
+        {% else %}<tr><td colspan="3" class="muted">No engagements recorded.</td></tr>{% endfor %}
+        </tbody>
+        {% if s.audits_per_member %}<tfoot><tr><td>Firm</td><td class="num">{{ s.total_engagements }}</td><td class="num">{{ s.total_fees|inr }}</td></tr></tfoot>{% endif %}
+      </table>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="section-head">
+      <h2>Standing client &amp; fee list</h2>
+      <div class="actions">
+        <button type="button" id="csv-btn">Export CSV</button>
+        <button type="button" class="primary" data-open="#add-engagement">Add engagement</button>
+      </div>
+    </div>
+    <form method="get" action="/registers" class="inline-form" style="margin:12px 0" aria-label="Filter the register">
+      <label>Partner
+        <select name="partner"><option value="">All partners</option>
+          {% for p in partners %}<option value="{{ p }}" {{ 'selected' if p|lower == f_partner|lower }}>{{ p }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Service
+        <select name="service"><option value="">All services</option>
+          {% for sv in services %}<option value="{{ sv }}" {{ 'selected' if sv|lower == f_service|lower }}>{{ sv }}</option>{% endfor %}
+        </select>
+      </label>
+      <button type="submit">Filter</button>
+      {% if f_partner or f_service %}<a class="btn" href="/registers">Clear</a>{% endif %}
+    </form>
+    <div class="table-wrap">
+      <table id="assurance-table">
+        <thead><tr><th>Engagement</th><th>Client</th><th>Service</th><th>Partner</th><th>Period</th><th class="num">Fee</th><th>Report date</th><th>UDIN</th><th></th></tr></thead>
+        <tbody>
+        {% for e in a.engagements %}
+          <tr>
+            <td class="nowrap" data-raw="{{ e.engagement }}">{{ e.engagement }}</td>
+            <td data-raw="{{ e.client }}">{{ e.client }}</td>
+            <td data-raw="{{ e.service }}">{{ e.service }}</td>
+            <td data-raw="{{ e.partner }}">{{ e.partner }}</td>
+            <td class="nowrap" data-raw="{{ e.period_from or '' }} to {{ e.period_to or '' }}">{{ e.period_from|date }} – {{ e.period_to|date }}</td>
+            <td class="num" data-raw="{{ e.fee if e.fee is not none else '' }}">{% if e.fee is none %}<span class="chip warn">Not set</span>{% else %}{{ e.fee|inr }}{% endif %}</td>
+            <td class="nowrap" data-raw="{{ e.report_date or '' }}">{% if e.report_date %}{{ e.report_date|date }}{% else %}<span class="chip plain">Pending</span>{% endif %}</td>
+            <td class="nowrap" data-raw="{{ e.udin or '' }}">{% if e.udin %}{{ e.udin }}{% else %}<span class="chip plain">Pending</span>{% endif %}</td>
+            <td class="nowrap"><button type="button" class="link" data-open="#edit-engagement"
+              data-fill='{{ {"id": e.id, "label": e.engagement ~ " · " ~ e.client, "report_date": (e.report_date.isoformat() if e.report_date else ""), "udin": e.udin or "", "fee": (e.fee|string if e.fee is not none else "")}|tojson }}'>Edit</button></td>
+          </tr>
+        {% else %}
+          <tr><td colspan="9" class="muted">{% if f_partner or f_service %}No engagements match this filter.{% else %}No engagements yet. Add the first one.{% endif %}</td></tr>
+        {% endfor %}
+        </tbody>
+        {% if a.engagements %}<tfoot><tr><td colspan="5">{{ a.filtered_count }} engagement{{ '' if a.filtered_count == 1 else 's' }}{% if f_partner or f_service %} shown{% endif %}</td><td class="num">{{ shown_fees|inr }}</td><td colspan="3"></td></tr></tfoot>{% endif %}
+      </table>
+    </div>
+  </div>
+</section>
+
+{# ================= SQC 1 ================= #}
+<section aria-labelledby="sq-h" class="grid">
+  <div class="section-head">
+    <div><h2 id="sq-h" style="font-size:20px">SQC 1 policy register</h2>
+    <p>The firm's quality control policies and the evidence that they operated. The manual alone is not evidence.</p></div>
+    <button type="button" class="primary" data-open="#add-sqc">Add policy</button>
+  </div>
+  {% set q = sqc.summary %}
+  <div class="grid kpis">
+    <div class="kpi"><div class="kpi-label">Policies</div><div class="kpi-value">{{ q.total_policies }}</div></div>
+    <div class="kpi {{ 'alert' if q.acknowledged < q.total_policies }}"><div class="kpi-label">Acknowledged</div><div class="kpi-value">{{ q.acknowledged }} <span class="muted" style="font-size:16px">/ {{ q.total_policies }}</span></div></div>
+    <div class="kpi {{ 'alert' if q.with_evidence_of_operation < q.total_policies }}"><div class="kpi-label">With evidence of operation</div><div class="kpi-value">{{ q.with_evidence_of_operation }} <span class="muted" style="font-size:16px">/ {{ q.total_policies }}</span></div></div>
+  </div>
+  <div class="card">
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Area</th><th>Version</th><th>Effective</th><th>Acknowledgement</th><th>Evidence of operation</th><th></th></tr></thead>
+        <tbody>
+        {% for p in sqc.policies %}
+          <tr>
+            <td>{{ p.area }}</td>
+            <td class="nowrap">{{ p.policy_version }}</td>
+            <td class="nowrap">{{ p.effective_from|date }}</td>
+            <td>{% if p.acknowledged_by %}<span class="chip ok">Acknowledged</span><div class="small muted">{{ p.acknowledged_by }} · {{ p.acknowledged_at|date }}</div>{% else %}<span class="chip warn">Pending</span>{% endif %}</td>
+            <td>{% if p.evidence_of_operation %}{{ p.evidence_of_operation }}{% else %}<span class="chip warn">None recorded</span>{% endif %}</td>
+            <td class="nowrap"><button type="button" class="link" data-open="#record-sqc"
+              data-fill='{{ {"id": p.id, "label": p.area ~ " · " ~ p.policy_version, "acknowledged_by": "", "evidence_of_operation": p.evidence_of_operation or ""}|tojson }}'>Record</button></td>
+          </tr>
+        {% else %}<tr><td colspan="6" class="muted">No policies yet. Add one for each control area.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section class="card placeholder" aria-labelledby="st-h">
+  <h2 id="st-h">Staff compliance registers</h2>
+  <p class="muted">Articled and audit assistants' attendance, work diaries, stipend payments and training hours arrive in <strong>Pass 2 · Stage 5</strong>. They count toward the readiness score, so they will not be optional.</p>
+</section>
+
+{# ================= dialogs ================= #}
+<dialog id="add-engagement" aria-labelledby="ae-h">
+  <form id="add-engagement-form" method="dialog" novalidate>
+    <div class="dialog-head"><h2 id="ae-h">Add assurance engagement</h2><button type="button" class="link" data-close>Close</button></div>
+    <div class="form-grid">
+      <label>Engagement code<input name="engagement" required placeholder="ENG-2026-010"></label>
+      <label>Client<input name="client" required></label>
+      <label>Service<input name="service" required list="service-list" placeholder="Statutory Audit"></label>
+      <label>Partner<input name="partner" required list="partner-list"></label>
+      <label>Period from<input type="date" name="period_from"></label>
+      <label>Period to<input type="date" name="period_to"></label>
+      <label>Fee (₹)<input type="number" name="fee" min="0" step="0.01"></label>
+      <label>Report date<input type="date" name="report_date"></label>
+      <label class="wide">UDIN <span class="hint">once the report is signed</span><input name="udin"></label>
+    </div>
+    <datalist id="service-list">{% for sv in services %}<option value="{{ sv }}">{% endfor %}</datalist>
+    <datalist id="partner-list">{% for p in partners %}<option value="{{ p }}">{% endfor %}</datalist>
+    <div class="form-error" hidden></div>
+    <div class="dialog-foot"><button type="button" data-close>Cancel</button><button type="submit" class="primary">Add engagement</button></div>
+  </form>
+</dialog>
+
+<dialog id="edit-engagement" aria-labelledby="ee-h">
+  <form id="edit-engagement-form" method="dialog" novalidate>
+    <div class="dialog-head"><h2 id="ee-h">Update engagement</h2><button type="button" class="link" data-close>Close</button></div>
+    <input type="hidden" name="id">
+    <p class="muted" id="ee-label"></p>
+    <div class="form-grid">
+      <label>Report date<input type="date" name="report_date"></label>
+      <label>UDIN<input name="udin"></label>
+      <label>Fee (₹)<input type="number" name="fee" min="0" step="0.01"></label>
+    </div>
+    <div class="form-error" hidden></div>
+    <div class="dialog-foot"><button type="button" data-close>Cancel</button><button type="submit" class="primary">Save</button></div>
+  </form>
+</dialog>
+
+<dialog id="add-sqc" aria-labelledby="as-h">
+  <form id="add-sqc-form" method="dialog" novalidate>
+    <div class="dialog-head"><h2 id="as-h">Add SQC 1 policy</h2><button type="button" class="link" data-close>Close</button></div>
+    <div class="form-grid">
+      <label>Control area<input name="area" required list="area-list" placeholder="Independence"></label>
+      <label>Policy version<input name="policy_version" required placeholder="v1.0"></label>
+      <label>Effective from<input type="date" name="effective_from" required></label>
+      <label>Acknowledged by <span class="hint">optional</span><input name="acknowledged_by"></label>
+      <label class="wide">Evidence of operation <span class="hint">optional. What shows the policy was followed?</span><textarea name="evidence_of_operation"></textarea></label>
+    </div>
+    <datalist id="area-list">{% for p in sqc.policies %}<option value="{{ p.area }}">{% endfor %}</datalist>
+    <div class="form-error" hidden></div>
+    <div class="dialog-foot"><button type="button" data-close>Cancel</button><button type="submit" class="primary">Add policy</button></div>
+  </form>
+</dialog>
+
+<dialog id="record-sqc" aria-labelledby="rs-h">
+  <form id="record-sqc-form" method="dialog" novalidate>
+    <div class="dialog-head"><h2 id="rs-h">Record acknowledgement or evidence</h2><button type="button" class="link" data-close>Close</button></div>
+    <input type="hidden" name="id">
+    <p class="muted" id="rs-label"></p>
+    <div class="form-grid">
+      <label class="wide">Acknowledged by <span class="hint">stamped with the current time. An acknowledgement can be replaced by a later one but not cleared.</span><input name="acknowledged_by"></label>
+      <label class="wide">Evidence of operation<textarea name="evidence_of_operation"></textarea></label>
+    </div>
+    <div class="form-error" hidden></div>
+    <div class="dialog-foot"><button type="button" data-close>Cancel</button><button type="submit" class="primary">Save</button></div>
+  </form>
+</dialog>
+{% endblock %}
+
+{% block scripts %}<script src="/static/registers.js"></script>{% endblock %}

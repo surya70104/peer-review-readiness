@@ -1,0 +1,264 @@
+{% extends "base.html" %}
+{% block title %}Standing{% endblock %}
+{% block content %}
+
+<div class="page-head">
+  <div>
+    <h1>1 · Standing</h1>
+    <p class="sub">Which phase applies to the firm and on what basis, the certificate, and the date by which the next review must start.</p>
+  </div>
+  <div class="toolbar">
+    <form method="get" action="/" class="inline-form" aria-label="View as of a date">
+      <label>View as of
+        <input type="date" name="as_of" value="{{ (as_of or eff).isoformat() }}">
+      </label>
+      <button type="submit">Apply</button>
+      {% if as_of %}<a class="btn" href="/">Today</a>{% endif %}
+    </form>
+    {% if view %}<button class="primary" type="button" data-open="#profile-dialog">Edit firm profile &amp; certificate</button>{% endif %}
+  </div>
+</div>
+
+{% if simulated %}
+<div class="banner sim" role="note">
+  <strong>Simulated view</strong>
+  <p>The clock below is evaluated as of {{ eff|date }}, not today ({{ today|date }}). Nothing has been changed.</p>
+</div>
+{% endif %}
+
+{% if not view %}
+<section class="card">
+  <h2>No firm profile yet</h2>
+  <p class="muted">Create the profile to see the phase, certificate state and renewal clock. For a sample firm, run <code>python scripts\seed_demo.py</code>.</p>
+  <div class="actions" style="margin-top:14px"><button class="primary" type="button" data-open="#profile-dialog">Create firm profile</button></div>
+</section>
+{% else %}
+{% set p = view.profile %}{% set a = view.applicability %}{% set c = view.clock %}{% set fo = view.follow_on %}
+
+{# ---- explicit warnings: stated in words, never colour alone ---- #}
+{% if c.has_gap_warning %}
+<section class="banner danger" role="alert">
+  <strong>Gap warning · signing restriction on listed company audit reports</strong>
+  <p>{{ c.warning_message }}</p>
+</section>
+{% endif %}
+{% if fo.due %}
+<section class="banner {{ 'danger' if fo.days_remaining is not none and (fo.due - eff).days < 0 else 'warn' }}" role="status">
+  <strong>Follow-on review due {{ fo.due|date }}</strong>
+  <p>A modified final report dated {{ fo.last_report_date|date }} brings a follow-on review. It is
+    {% set d = (fo.due - eff).days %}{% if d < 0 %}overdue by {{ -d }} days{% else %}{{ d }} days away{% endif %}
+    ({{ follow_on_months }} months after the report; the Board may shorten it, but not below 6).</p>
+</section>
+{% endif %}
+{% if c.status == 'no_certificate' %}
+<section class="banner info" role="status"><strong>No certificate recorded</strong><p>{{ c.note }}</p></section>
+{% endif %}
+
+{# ---- hero ---- #}
+<div class="grid hero">
+  <section class="card hero-lead {{ 'late' if c.has_gap_warning }}" aria-labelledby="startby-h">
+    <h3 id="startby-h">The review must start by</h3>
+    {% if c.start_by %}
+      <div class="big-date">{{ c.start_by|date }}</div>
+      <div class="meta">
+        <span>Certificate {{ p.certificate_no or '—' }} expires <strong>{{ c.expires_on|date }}</strong></span>
+        <span>Planned backward through {{ c.schedule|length }} stages · {{ c.lead_time_days }} days of lead time</span>
+        <span>If started {{ eff|date }}, the final clean report lands {{ c.projected_final_report|date }}</span>
+      </div>
+      <span class="tag">
+        {% if c.days_to_start_by < 0 %}Start date passed {{ -c.days_to_start_by }} days ago
+        {% elif c.days_to_start_by == 0 %}Start today
+        {% else %}{{ c.days_to_start_by }} days from {{ eff|date }}{% endif %}
+      </span>
+    {% else %}
+      <div class="big-date">—</div>
+      <div class="meta"><span>Enter the certificate's expiry date to plan the renewal backward.</span></div>
+    {% endif %}
+  </section>
+
+  <section class="card" aria-labelledby="phase-h">
+    <h3 id="phase-h">Applicable phase</h3>
+    <div class="phase-big {{ 'phase-none' if a.phase == 0 }}">{{ a.phase|phase }}</div>
+    <p class="basis">{{ p.phase_basis }}</p>
+    <p class="muted small" style="margin-top:6px">Basis recorded {{ p.basis_changed_at|date }}</p>
+    {% if a.phase %}
+    <div class="chips">
+      {% if a.in_force %}<span class="chip ok">In force since {{ a.effective|date }}</span>
+      {% else %}<span class="chip warn">Takes effect {{ a.effective|date }} · {{ days_to_phase }} days</span>{% endif %}
+      {% for ph in a.phases_applying if ph.phase != a.phase %}<span class="chip plain">Also Phase {{ ph.label }}</span>{% endfor %}
+    </div>
+    {% endif %}
+  </section>
+
+  <section class="card" aria-labelledby="cert-h">
+    <h3 id="cert-h">Certificate</h3>
+    <dl class="facts">
+      <dt>Number</dt><dd>{{ p.certificate_no or '—' }}</dd>
+      <dt>Effective from</dt><dd>{{ p.effective_from|date }}</dd>
+      <dt>Expires on</dt><dd>{{ p.expires_on|date }}</dd>
+      <dt>Practice unit</dt><dd>Level {{ 'I' if p.level == 1 else 'II' }}</dd>
+      <dt>Last report</dt><dd>{% if p.last_report_type %}{{ p.last_report_type|capitalize }} · {{ p.last_report_date|date }}{% else %}—{% endif %}</dd>
+    </dl>
+    <p class="muted small" style="margin-top:10px">Dates are read from the certificate, never derived.</p>
+  </section>
+</div>
+
+{# ---- backward plan ---- #}
+{% if c.schedule %}
+<details class="card" {{ 'open' if c.has_gap_warning }}>
+  <summary>Backward plan · {{ c.schedule|length }} stages from {{ c.start_by|date }} to {{ c.expires_on|date }}</summary>
+  <div class="bar" role="img" aria-label="Stage lengths in proportion">
+    {% for s in c.schedule %}<span style="flex: {{ s.days }}" title="{{ s.stage }} · {{ s.days }} days"></span>{% endfor %}
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>#</th><th>Stage</th><th>From</th><th>To</th><th class="num">Days</th></tr></thead>
+      <tbody>
+      {% for s in c.schedule %}
+        <tr><td class="num">{{ loop.index }}</td><td>{{ s.stage }}</td><td class="nowrap">{{ s.start|date }}</td><td class="nowrap">{{ s.end|date }}</td><td class="num">{{ s.days }}</td></tr>
+      {% endfor %}
+      </tbody>
+      <tfoot><tr><td></td><td>Total lead time</td><td class="nowrap">{{ c.start_by|date }}</td><td class="nowrap">{{ c.expires_on|date }}</td><td class="num">{{ c.lead_time_days }}</td></tr></tfoot>
+    </table>
+  </div>
+  <p class="muted small" style="margin-top:10px">The final stage ends on the certificate's expiry: a final clean report submitted before expiry makes the new certificate run seamlessly from the next day. Only the two 15-day clocks are ICAI deadlines; the other stage lengths are the firm's planning allowance.</p>
+</details>
+{% endif %}
+
+{# ---- controls ---- #}
+<div class="grid two">
+  <section class="card" aria-labelledby="pc-h">
+    <h2 id="pc-h">Partner change</h2>
+    <p class="muted small">Currently <strong>{{ p.partner_count }}</strong> partners. Try a change as a dry run (nothing saved), or apply it to record the phase flip and its date.</p>
+    <form id="partner-form" data-max-history="{{ max_history_id }}" style="margin-top:14px">
+      <div class="inline-form">
+        <label>New partner count
+          <input type="number" name="partner_count" min="0" step="1" value="{{ p.partner_count + 1 }}" required>
+        </label>
+        <label>Effective on
+          <input type="date" name="effective_on" value="{{ today.isoformat() }}" required>
+        </label>
+      </div>
+      <div class="actions" style="margin-top:12px">
+        <button type="submit" data-apply="false">Dry run</button>
+        <button type="submit" class="primary" data-apply="true">Apply change</button>
+      </div>
+      <div class="form-error" hidden></div>
+      <div class="result" hidden aria-live="polite"></div>
+    </form>
+  </section>
+
+  <section class="card" aria-labelledby="fp-h">
+    <h2 id="fp-h">Firm profile</h2>
+    <dl class="facts">
+      <dt>Firm</dt><dd>{{ p.firm }}</dd>
+      <dt>Renders attestation</dt><dd>{{ 'Yes' if p.renders_attestation else 'No' }}</dd>
+      <dt>Audits listed entities</dt><dd>{{ 'Yes' if p.audits_listed_entities else 'No' }}</dd>
+      <dt>Large unlisted public cos.</dt><dd>{{ 'Yes' if p.audits_large_unlisted_public else 'No' }}</dd>
+      <dt>Entities that raised &gt; ₹50 cr</dt><dd>{{ 'Yes' if p.audits_entities_raised_50cr else 'No' }}</dd>
+      <dt>Public Sector Bank branches</dt><dd>{{ 'Yes' if p.audits_psb_branches else 'No' }}</dd>
+    </dl>
+    <div class="actions" style="margin-top:14px"><button type="button" data-open="#profile-dialog">Edit firm profile &amp; certificate</button></div>
+  </section>
+</div>
+
+{# ---- history ---- #}
+<section class="card" aria-labelledby="hist-h">
+  <div class="section-head">
+    <div><h2 id="hist-h">Applicability history</h2>
+    <p class="muted small">Append-only. Every change to the phase or its basis, with the date it took effect. Newest first.</p></div>
+  </div>
+  <div class="table-wrap" style="margin-top:8px">
+    <table>
+      <thead><tr><th>Date</th><th>Change</th><th>Basis</th><th class="num">Partners</th></tr></thead>
+      <tbody>
+      {% for h in view.history|reverse %}
+        <tr>
+          <td class="nowrap">{{ h.changed_at|date }}</td>
+          <td class="nowrap">
+            {% if h.old_phase is none %}<span class="chip plain">Recorded</span> {{ h.new_phase|phase }}
+            {% elif h.old_phase == h.new_phase %}{{ h.new_phase|phase }} <span class="muted small">(basis updated)</span>
+            {% else %}{{ h.old_phase|phase }} → <strong>{{ h.new_phase|phase }}</strong>{% endif %}
+          </td>
+          <td>{{ h.basis }}</td>
+          <td class="num">{{ h.partner_count }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="4" class="muted">No history yet.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+
+{# ---- create / edit dialog ---- #}
+<dialog id="profile-dialog" aria-labelledby="pd-h">
+  <form id="profile-form" method="dialog" {% if view %}data-initial='{{ initial|tojson }}'{% endif %} data-create="{{ 'false' if view else 'true' }}" novalidate>
+    <div class="dialog-head"><h2 id="pd-h">{{ 'Edit firm profile & certificate' if view else 'Create firm profile' }}</h2><button type="button" class="link" data-close>Close</button></div>
+    {% set i = initial if view else {} %}
+    <div class="form-grid">
+      <label class="wide">Firm name<input name="firm" value="{{ i.firm or '' }}" required></label>
+      <label>Practice unit level
+        <select name="level"><option value="2" {{ 'selected' if i.level != 1 }}>Level II (4-year cycle)</option><option value="1" {{ 'selected' if i.level == 1 }}>Level I (3-year cycle)</option></select>
+      </label>
+      {% if not view %}<label>Partners<input type="number" name="partner_count" min="0" value="0"></label>{% endif %}
+    </div>
+
+    <div>
+      <h3>Phase triggers</h3>
+      <div class="checks" style="margin-top:8px">
+        <label><input type="checkbox" name="renders_attestation" {{ 'checked' if (not view) or i.renders_attestation }}> Renders attestation services <span class="hint">(enables the 5 / 4 / 3 partner ladder)</span></label>
+        <label><input type="checkbox" name="audits_listed_entities" {{ 'checked' if i.audits_listed_entities }}> Audits listed entities <span class="hint">(Phase I)</span></label>
+        <label><input type="checkbox" name="audits_large_unlisted_public" {{ 'checked' if i.audits_large_unlisted_public }}> Audits large unlisted public companies <span class="hint">(Phase II)</span></label>
+        <label><input type="checkbox" name="audits_entities_raised_50cr" {{ 'checked' if i.audits_entities_raised_50cr }}> Audits entities that raised over ₹50 cr <span class="hint">(Phase III)</span></label>
+        <label><input type="checkbox" name="audits_psb_branches" {{ 'checked' if i.audits_psb_branches }}> Audits Public Sector Bank branches <span class="hint">(Phase IV)</span></label>
+      </div>
+    </div>
+
+    <div>
+      <h3>Certificate</h3>
+      <div class="form-grid" style="margin-top:8px">
+        <label>Certificate number<input name="certificate_no" value="{{ i.certificate_no or '' }}"></label>
+        <label>Effective from<input type="date" name="effective_from" value="{{ i.effective_from or '' }}"></label>
+        <label>Expires on <span class="hint">as printed on the certificate</span><input type="date" name="expires_on" value="{{ i.expires_on or '' }}"></label>
+      </div>
+    </div>
+
+    <div>
+      <h3>Last review outcome</h3>
+      <div class="form-grid" style="margin-top:8px">
+        <label>Final report
+          <select name="last_report_type">
+            <option value="" {{ 'selected' if not i.last_report_type }}>None recorded</option>
+            <option value="clean" {{ 'selected' if i.last_report_type == 'clean' }}>Clean</option>
+            <option value="modified" {{ 'selected' if i.last_report_type == 'modified' }}>Modified</option>
+          </select>
+        </label>
+        <label>Report date<input type="date" name="last_report_date" value="{{ i.last_report_date or '' }}"></label>
+        <label id="fo-wrap">Follow-on review after
+          <select name="follow_on_months">
+            {% for m in range(6, 13) %}<option value="{{ m }}" {{ 'selected' if m == (follow_on_months if view else 12) }}>{{ m }} months{{ ' (default)' if m == 12 }}</option>{% endfor %}
+          </select>
+          <span class="hint">Modified reports only. The Board may shorten, not below 6.</span>
+        </label>
+      </div>
+    </div>
+
+    {% if view %}
+    <label>Changes above took effect on <span class="hint">leave blank for today; only matters if the phase or its basis changes</span>
+      <input type="date" name="effective_on" max="{{ today.isoformat() }}">
+    </label>
+    {% else %}
+    <label>Profile recorded as effective on <span class="hint">leave blank for today</span>
+      <input type="date" name="effective_on" max="{{ today.isoformat() }}">
+    </label>
+    {% endif %}
+
+    <div class="form-error" hidden></div>
+    <div class="dialog-foot"><button type="button" data-close>Cancel</button><button type="submit" class="primary">Save</button></div>
+  </form>
+</dialog>
+{% endblock %}
+
+{% block scripts %}<script src="/static/standing.js"></script>{% endblock %}
