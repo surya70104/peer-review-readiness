@@ -7,16 +7,22 @@ Demo rows are identified by key, not by "everything in the table":
   * the profile whose firm is DEMO_FIRM (its history goes with it)
   * assurance engagements whose code is in ENGAGEMENTS
   * SQC policies whose (area, version) is in POLICIES
+  * staff compliance records whose (person, month) is in STAFF
+  * the review cycle whose reviewer is DEMO_REVIEWER (its findings go with it)
 Anything else in the database is never touched. Note that ENG-2026-001 is one of
 the demo engagements, so --reset removes and re-adds that row.
 
 The profile is built through the real service layer with back-dated effective
 dates, so the database trigger writes the genuine applicability history.
+
+The demo review cycle is dated relative to the day the seeder runs, so its
+clocks look alive whenever it is seeded (the response clock is a few days from
+due). It is skipped if any other cycle is open, so a real cycle is never touched.
 """
 import argparse
 import os
 import sys
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -26,9 +32,11 @@ import psycopg2  # noqa: E402
 from dotenv import load_dotenv  # noqa: E402
 from psycopg2.extras import RealDictCursor  # noqa: E402
 
-from app.services import profile_service  # noqa: E402
+from app.services import profile_service, review_service  # noqa: E402
 
 DEMO_FIRM = "Whhoohh Path LLP"
+DEMO_REVIEWER = "CA Venkat Subramanian"
+CYCLE_YEAR = 2027
 
 # (code, client, service, partner, period_from, period_to, fee, report_date, udin_serial)
 RAMESH, ANITHA, SURESH, PRIYA = "CA Ramesh Kumar", "CA Anitha Reddy", "CA Suresh Varma", "CA Priya Nair"
@@ -45,6 +53,12 @@ ENGAGEMENTS = [
     ("ENG-2026-010", "Warangal Rural Finance Ltd",     "Certification",    ANITHA, "2025-04-01", "2026-03-31", 85000,   "2026-04-18", 10),
 ]
 
+# Demo entity categories (the sample selector reads these). Set only where still blank.
+CATEGORIES = {"ENG-2026-002": "listed", "ENG-2026-005": "listed", "ENG-2026-004": "level1_pie",
+              "ENG-2026-007": "raised_50cr", "ENG-2026-001": "large_unlisted_public",
+              "ENG-2026-003": "other", "ENG-2026-008": "other", "ENG-2026-006": "other",
+              "ENG-2026-009": "other", "ENG-2026-010": "other"}
+
 # (area, version, effective_from, acknowledged_by, acknowledged_at, evidence)
 POLICIES = [
     ("Independence", "v2.0", "2025-04-01", PRIYA, "2025-04-10T11:00:00+05:30",
@@ -60,6 +74,23 @@ POLICIES = [
 ]
 
 
+# Staff compliance. Months are fixed so the demo reads the same on any day.
+# (person, role, registration_no, month, working_days, attended, diary, stipend, paid_on, mode, trained, required, notes)
+OCT, SEP, AUG = "2026-10-01", "2026-09-01", "2026-08-01"
+STAFF = [
+    ("Arjun Menon",   "articled_assistant", "ART-2024-0117", AUG, 26, 25, True,  12000, "2026-09-02", "bank_transfer", 8, 8, None),
+    ("Arjun Menon",   "articled_assistant", "ART-2024-0117", SEP, 26, 24, True,  12000, None,         None,            8, 8, "Stipend not yet released."),
+    ("Arjun Menon",   "articled_assistant", "ART-2024-0117", OCT, 27, 26, True,  12000, None,         None,            6, 8, None),
+    ("Kavya Rao",     "articled_assistant", "ART-2025-0042", AUG, 26, 26, True,  10000, "2026-09-01", "bank_transfer", 8, 8, None),
+    ("Kavya Rao",     "articled_assistant", "ART-2025-0042", SEP, 26, 25, True,  10000, "2026-10-01", "bank_transfer", 9, 8, None),
+    ("Kavya Rao",     "articled_assistant", "ART-2025-0042", OCT, 27, 27, True,  10000, "2026-11-02", "bank_transfer", 8, 8, None),
+    ("Imran Sheikh",  "audit_assistant",    "EMP-0231",      SEP, 26, 23, True,  15000, "2026-10-01", "bank_transfer", 5, 8, "Missed the technical update session."),
+    ("Imran Sheikh",  "audit_assistant",    "EMP-0231",      OCT, 27, 27, False, 15000, "2026-11-02", "bank_transfer", 8, 8, None),
+    ("Lakshmi Devi",  "audit_staff",        "EMP-0107",      SEP, 26, 26, False, None,  None,         None,            4, 4, None),
+    ("Lakshmi Devi",  "audit_staff",        "EMP-0107",      OCT, 27, 26, False, None,  None,         None,            4, 4, None),
+]
+
+
 def udin(partner_idx: int, serial: int) -> str:
     # 18 characters, and plainly a demo value.
     return f"26{210000 + partner_idx:06d}DEMO{serial:04d}XX"
@@ -69,7 +100,28 @@ def partner_idx(name: str) -> int:
     return [RAMESH, ANITHA, SURESH, PRIYA].index(name) + 1
 
 
+def _table(cur, name: str) -> bool:
+    cur.execute("SELECT to_regclass(%s) IS NOT NULL AS ok", (name,))
+    return cur.fetchone()["ok"]
+
+
 def reset(cur) -> None:
+    n_cycle = 0
+    if _table(cur, "pr_cycle"):
+        cur.execute("SELECT id FROM pr_cycle WHERE reviewer = %s", (DEMO_REVIEWER,))
+        ids = [r["id"] for r in cur.fetchall()]
+        if ids:
+            cur.execute("DELETE FROM pr_finding WHERE cycle_id = ANY(%s)", (ids,))
+            cur.execute("DELETE FROM pr_cycle WHERE id = ANY(%s)", (ids,))
+            n_cycle = len(ids)
+    codes = [e[0] for e in ENGAGEMENTS]
+    if _table(cur, "eng_later_addition"):
+        cur.execute("SELECT count(*) AS n FROM eng_later_addition WHERE engagement = ANY(%s)", (codes,))
+        if cur.fetchone()["n"]:
+            sys.exit("[reset] a demo engagement has documented later additions. They are an append-only "
+                     "record and cannot be removed, so --reset will not delete those engagements.")
+    if _table(cur, "eng_score"):
+        cur.execute("DELETE FROM eng_score WHERE engagement = ANY(%s)", (codes,))   # derived; recomputed on demand
     cur.execute("DELETE FROM pr_profile WHERE firm = %s", (DEMO_FIRM,))
     n_profile = cur.rowcount
     cur.execute("DELETE FROM assurance_register WHERE engagement = ANY(%s)", ([e[0] for e in ENGAGEMENTS],))
@@ -78,7 +130,13 @@ def reset(cur) -> None:
     for area, version, *_ in POLICIES:
         cur.execute("DELETE FROM sqc_policy WHERE area = %s AND policy_version = %s", (area, version))
         n_sqc += cur.rowcount
-    print(f"[reset] removed {n_profile} profile, {n_eng} engagements, {n_sqc} SQC policies")
+    n_staff = 0
+    for person, role, reg, month, *_ in STAFF:
+        cur.execute("DELETE FROM staff_compliance WHERE lower(btrim(person)) = lower(%s) AND month = %s",
+                    (person, month))
+        n_staff += cur.rowcount
+    print(f"[reset] removed {n_profile} profile, {n_eng} engagements, {n_sqc} SQC policies, {n_staff} staff records, "
+          f"{n_cycle} review cycle")
 
 
 def seed_profile(cur) -> None:
@@ -116,6 +174,12 @@ def seed_assurance(cur) -> None:
         )
         added += cur.rowcount
     print(f"[seed] assurance: {added} added, {len(ENGAGEMENTS) - added} already present")
+    cur.execute("SELECT 1 FROM information_schema.columns WHERE table_name = 'assurance_register' "
+                "AND column_name = 'entity_category'")
+    if cur.fetchone():
+        for code, cat in CATEGORIES.items():
+            cur.execute("UPDATE assurance_register SET entity_category = %s "
+                        "WHERE engagement = %s AND entity_category IS NULL", (cat, code))
 
 
 def seed_sqc(cur) -> None:
@@ -128,6 +192,72 @@ def seed_sqc(cur) -> None:
         )
         added += cur.rowcount
     print(f"[seed] SQC 1: {added} added, {len(POLICIES) - added} already present")
+
+
+def seed_staff(cur) -> None:
+    cur.execute("SELECT to_regclass('staff_compliance') IS NOT NULL AS ok")
+    if not cur.fetchone()["ok"]:
+        print("[seed] staff_compliance table missing (run scripts\\migrate.py); skipped")
+        return
+    added = 0
+    for (person, role, reg, month, wd, att, diary, amount, paid, mode, done, req, notes) in STAFF:
+        cur.execute(
+            """INSERT INTO staff_compliance
+               (person, role, registration_no, month, working_days, attendance_days, diary_submitted,
+                stipend_amount, stipend_paid_at, stipend_mode, training_hours, training_required, notes)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+               ON CONFLICT (lower(btrim(person)), month) DO NOTHING""",
+            (person, role, reg, month, wd, att, diary, amount, paid, mode, done, req, notes),
+        )
+        added += cur.rowcount
+    print(f"[seed] staff compliance: {added} added, {len(STAFF) - added} already present")
+
+
+def seed_cycle(cur) -> None:
+    """One in-progress review: questionnaire sent on time, findings in, one resolved and one open."""
+    if not _table(cur, "pr_cycle"):
+        print("[seed] pr_cycle table missing (run scripts\\migrate.py); skipped")
+        return
+    cur.execute("SELECT selection_year, reviewer, final_report_at FROM pr_cycle")
+    rows = cur.fetchall()
+    if any(r["reviewer"] == DEMO_REVIEWER for r in rows):
+        print("[seed] review cycle: already present")
+        return
+    if any(r["final_report_at"] is None for r in rows):
+        print("[seed] review cycle: another cycle is open, so the demo cycle was not added")
+        return
+    if any(r["selection_year"] == CYCLE_YEAR for r in rows):
+        print(f"[seed] review cycle: a {CYCLE_YEAR} cycle already exists, so the demo cycle was not added")
+        return
+    cur.execute("SELECT engagement FROM assurance_register WHERE engagement = 'ENG-2026-002'")
+    eng = "ENG-2026-002" if cur.fetchone() else None
+
+    day = lambda n: date.today() - timedelta(days=n)   # noqa: E731
+    cycle = review_service.create_cycle(cur, {
+        "selection_year": CYCLE_YEAR, "reviewer": DEMO_REVIEWER,
+        "intimation_at": day(40),          # the firm applied early; the Board selected it
+        "consent_at": day(28),             # clock 1 starts: questionnaire due 15 days later
+        "questionnaire_sent": day(14),     # sent a day before it was due
+        "visit_at": day(13),               # reviewer's on-site work
+        "findings_at": day(11),            # clock 2 starts: response due in 4 days
+    })
+    f1 = review_service.create_finding(cur, cycle["id"], {
+        "control_area": "Independence", "engagement": eng, "severity": "medium", "owner": ANITHA,
+        "description": "Annual independence declarations were not on file for two staff members "
+                       "engaged on the Godavari Pharma audit."})
+    review_service.update_finding(cur, f1["id"], {
+        "pu_response": "Declarations obtained from both staff members and filed. A dated declaration is now "
+                       "collected when an engagement is accepted.",
+        "responded_at": day(4),
+        "corrective_action": "Declaration added to the engagement acceptance checklist; partner sign-off is "
+                             "required before fieldwork starts.",
+        "resolution": "Closed. Checked on the three most recent engagements.",
+        "evidence_ref": "DOC-IND-2026-11", "resolved": True, "resolved_on": day(3)})
+    review_service.create_finding(cur, cycle["id"], {
+        "control_area": "Staff recruitment, supervision and development", "severity": "high", "owner": PRIYA,
+        "description": "Work diaries of two articled assistants were not reviewed and countersigned by the "
+                       "supervising partner in August and September."})
+    print("[seed] review cycle: 2027 cycle in progress (questionnaire sent on time, 1 finding resolved, 1 open)")
 
 
 def main() -> None:
@@ -150,7 +280,12 @@ def main() -> None:
             seed_profile(cur)
             seed_assurance(cur)
             seed_sqc(cur)
+            seed_staff(cur)
+            seed_cycle(cur)
         conn.commit()
+    except psycopg2.errors.ForeignKeyViolation as exc:
+        conn.rollback()
+        sys.exit(f"[seed] stopped: other records refer to demo rows ({exc.diag.constraint_name}). Nothing was changed.")
     except Exception:
         conn.rollback()
         raise

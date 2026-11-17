@@ -1,0 +1,210 @@
+{% extends "base.html" %}
+{% from "_macros.html" import meter, gaps, status_chip, sev_chip %}
+{% block title %}Scorecard{% endblock %}
+{% block content %}
+{% set f = sc.firm %}
+{% set P = sc.pillars %}
+{% set w = sc.window %}
+
+<div class="page-head">
+  <div>
+    <h1>2 · Scorecard</h1>
+    <p class="sub">Readiness computed from the records on the engagements still open to fix. Every number traces to a rule and every gap names what to do.</p>
+  </div>
+  <div class="toolbar">
+    <form method="get" action="/scorecard" class="inline-form" aria-label="Choose the selection year">
+      <label>Selection year <input type="number" name="selection_year" min="2020" max="2100" value="{{ f_year }}" placeholder="{{ w.selection_year }}" style="width:110px"></label>
+      <button type="submit">Apply</button>
+      {% if f_year %}<a class="btn" href="/scorecard">Reset</a>{% endif %}
+    </form>
+    <button type="button" class="primary" id="recompute-btn" data-year="{{ f_year }}">Recompute scores</button>
+  </div>
+</div>
+
+<div class="banner info">
+  <strong>Review window: {{ w['from']|date }} to {{ w.to|date }}</strong>
+  <p>The three years before the selection year {{ w.selection_year }}, taken from the {{ w.source }}.
+  {% if sc.persisted.in_sync %}<span class="chip ok">Stored scores up to date</span>{% elif not sc.persisted.rows %}<span class="chip plain">No stored scores yet</span>{% else %}<span class="chip warn">Stored scores out of date</span>{% endif %}
+  <span class="muted small">{% if sc.persisted.last_recomputed_at %}Last recomputed {{ sc.persisted.last_recomputed_at|date }}. {% endif %}The figures below are always live; recompute saves them.</span></p>
+</div>
+
+<section class="grid hero" aria-label="Firm readiness">
+  <div class="card hero-lead">
+    <h3>Firm readiness</h3>
+    <div class="big-date">{{ f.overall_score|score }}{% if f.overall_score is not none %} <span class="score-of" style="color:inherit;opacity:.8">/ 100</span>{% endif %}</div>
+    {% if f.overall_score is not none %}{{ meter(f.overall_score) }}{% endif %}
+    <div class="meta" style="margin-top:10px">
+      <span>{{ f.pillars_assessed }} of {{ f.pillars_total }} pillars assessed</span>
+      <span>{{ f.note }}</span>
+    </div>
+  </div>
+  <div class="card" style="grid-column: span 2">
+    <h3>What to fix first</h3>
+    {% if sc.actions %}
+    <div class="table-wrap"><table>
+      <thead><tr><th>Severity</th><th>Where</th><th>Gap</th><th>Do this</th></tr></thead>
+      <tbody>
+      {% for a in sc.actions[:6] %}
+        <tr><td>{{ sev_chip(a.severity) }}</td>
+            <td class="nowrap">{{ {'engagement_files': 'Engagement', 'sqc1': 'SQC 1', 'staff': 'Staff'}[a.pillar] }}</td>
+            <td>{{ a.item }}</td><td class="muted">{{ a.action }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    {% if sc.actions|length > 6 %}
+    <details class="inline"><summary>Show the other {{ sc.actions|length - 6 }}</summary>
+      <div class="table-wrap"><table><tbody>
+      {% for a in sc.actions[6:] %}
+        <tr><td>{{ sev_chip(a.severity) }}</td>
+            <td class="nowrap">{{ {'engagement_files': 'Engagement', 'sqc1': 'SQC 1', 'staff': 'Staff'}[a.pillar] }}</td>
+            <td>{{ a.item }}</td><td class="muted">{{ a.action }}</td></tr>
+      {% endfor %}
+      </tbody></table></div>
+    </details>
+    {% endif %}
+    {% else %}<p class="muted">No open gaps in the pillars that have evidence.</p>{% endif %}
+  </div>
+</section>
+
+<section class="grid pillars" aria-label="The three pillars">
+  {% set eng = P.engagement_files %}
+  <div class="card pillar">
+    <h3>Engagement files</h3>
+    <div class="score-mid">{{ eng.score|score }}</div>
+    {% if eng.score is not none %}{{ meter(eng.score) }}{% endif %}
+    {% if eng.score is none %}<p class="muted small" style="margin-top:8px">{{ eng.note }}</p>
+    {% else %}
+    <div class="chips">
+      <span class="chip ok">{{ eng.status_counts.ready }} ready</span>
+      {% if eng.status_counts.open %}<span class="chip plain">{{ eng.status_counts.open }} open work</span>{% endif %}
+      {% if eng.status_counts.needs_attention %}<span class="chip warn">{{ eng.status_counts.needs_attention }} need attention</span>{% endif %}
+      {% if eng.status_counts.at_risk %}<span class="chip danger">{{ eng.status_counts.at_risk }} at risk</span>{% endif %}
+    </div>
+    <p class="muted small" style="margin-top:8px">{{ eng.checks_passed }} of {{ eng.checks_total }} checks pass across {{ eng.engagements }} engagements.</p>{% endif %}
+  </div>
+
+  {% set sq = P.sqc1 %}
+  <div class="card pillar">
+    <h3>SQC 1 policies</h3>
+    <div class="score-mid">{{ sq.score|score }}</div>
+    {% if sq.score is not none %}{{ meter(sq.score) }}{% endif %}
+    <p class="muted small" style="margin-top:8px">{{ sq.checks_passed }} of {{ sq.checks_total }} checks pass: a policy in effect, acknowledged, and evidence it operated, for each control area.</p>
+    <ul class="gap-list">
+      {% for a in sq.areas %}
+        <li>{% if a.recorded and a.acknowledged and a.evidence_of_operation %}<span class="chip ok">Complete</span>{% elif not a.recorded %}<span class="chip danger">No policy</span>{% else %}<span class="chip warn">{{ 'No evidence' if a.acknowledged else ('Not acknowledged' if a.evidence_of_operation else 'Incomplete') }}</span>{% endif %}<span>{{ a.area }}</span></li>
+      {% endfor %}
+    </ul>
+  </div>
+
+  {% set sf = P.staff %}
+  <div class="card pillar">
+    <h3>Staff compliance</h3>
+    <div class="score-mid">{{ sf.score|score }}</div>
+    {% if sf.score is not none %}{{ meter(sf.score) }}{% endif %}
+    {% if sf.score is none %}<p class="muted small" style="margin-top:8px">{{ sf.note }}</p>
+    {% else %}
+    <div class="chips">
+      <span class="chip {{ 'ok' if sf.compliant_people == sf.people else 'warn' }}">{{ sf.compliant_people }} of {{ sf.people }} people compliant</span>
+      {% if sf.missing_records %}<span class="chip danger">{{ sf.missing_records }} missing month{{ '' if sf.missing_records == 1 else 's' }}</span>{% endif %}
+    </div>
+    <p class="muted small" style="margin-top:8px">{{ sf.checks_passed }} of {{ sf.checks_total }} checks pass: work diary, stipend, training. It is part of the score, not an optional register.</p>
+    {% endif %}
+  </div>
+</section>
+
+<details class="card">
+  <summary>What this score covers, and what it does not</summary>
+  <p style="margin-top:12px">Engagement dimensions scored from the register today:
+    {% for d in sc.coverage.engagement_dimensions_assessed %}<span class="chip">{{ d }}</span> {% endfor %}</p>
+  <p class="muted small" style="margin-top:10px">Not assessed. The module does not capture the evidence yet, so it gives no score rather than a made-up one:</p>
+  <ul class="gap-list">
+    {% for k, why in sc.coverage.not_assessed.items() %}<li><span class="chip plain">{{ k }}</span><span>{{ why }}</span></li>{% endfor %}
+  </ul>
+</details>
+
+<section class="card" aria-labelledby="eng-h">
+  <div class="section-head">
+    <div><h2 id="eng-h">Engagements in the window</h2>
+    <p>Worst first. A documented later addition is shown as one, with its date and reason, and never changes the contemporaneous score.</p></div>
+  </div>
+  <div class="table-wrap">
+    <table id="score-table">
+      <thead><tr><th>Engagement</th><th>Status</th><th class="num">Score</th><th>Dimensions</th><th>Gaps</th><th>Later additions</th></tr></thead>
+      <tbody>
+      {% for e in sc.engagements %}
+        <tr>
+          <td><strong>{{ e.engagement }}</strong><div class="small muted">{{ e.client }}</div><div class="small muted">{{ e.service }} · {{ e.partner }}</div>
+              {% if e.sample_rank %}<a class="small" href="/likely-sample">Sample rank {{ e.sample_rank }}</a>{% endif %}</td>
+          <td>{{ status_chip(e.status) }}<div class="small muted" style="margin-top:4px">{% if e.report_date %}Report {{ e.report_date|date }}{% else %}No report yet{% endif %}</div></td>
+          <td class="num"><strong>{{ e.score|score }}</strong></td>
+          <td>
+            <div class="dim-chips">
+              {% for d in assessed %}
+                {% if d in e.dimensions %}{% set dm = e.dimensions[d] %}
+                  <span class="chip {{ dm.score|tone }}" title="{{ dm.checks_passed }} of {{ dm.checks_total }} checks">{{ d }} {{ dm.score|score }}</span>
+                {% else %}<span class="chip plain" title="Not applicable yet: needs a dated report">{{ d }} not yet due</span>{% endif %}
+              {% endfor %}
+            </div>
+            <div class="small muted" style="margin-top:6px">Not assessed: {{ not_assessed.keys()|join(', ') }}</div>
+          </td>
+          <td>{% if e.gaps %}{{ gaps(e.gaps) }}{% else %}<span class="muted small">None</span>{% endif %}</td>
+          <td>
+            {% if e.later_addition_count %}
+              <details class="inline"><summary>{{ e.later_addition_count }} later addition{{ '' if e.later_addition_count == 1 else 's' }}</summary>
+                <ul class="later-list">
+                {% for a in e.later_additions %}
+                  <li><strong>Later addition</strong>, documented {{ a.added_at|date }}{% if a.dimension %} · {{ a.dimension }}{% endif %}{% if a.added_by %} · {{ a.added_by }}{% endif %}
+                    <div>{{ a.description }}</div><div class="muted">Reason: {{ a.reason }}</div></li>
+                {% endfor %}
+                </ul>
+              </details>
+            {% else %}<span class="muted small">None</span>{% endif %}
+            <div style="margin-top:6px"><button type="button" class="link" data-open="#later-addition"
+              data-fill='{{ {"id": e.id, "label": e.engagement ~ " · " ~ e.client, "note": ("Assembly window closed " ~ (e.assembly_window_closes|date)) if e.assembly_closed else (("Assembly window closes " ~ (e.assembly_window_closes|date)) if e.assembly_window_closes else "No report date, so the file is not closed")}|tojson }}'>Log later addition</button></div>
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="6" class="muted">No engagements fall in this window.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{% if sc.outside_window %}
+<section class="card" aria-labelledby="out-h">
+  <h2 id="out-h">Outside the window</h2>
+  <p class="muted small" style="margin-top:6px">Scored on screen but not stored, because a stored score belongs to a window. They move into a later window as time passes.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Engagement</th><th>Status</th><th class="num">Score</th><th>Why outside</th></tr></thead>
+    <tbody>
+    {% for o in sc.outside_window %}
+      <tr><td><strong>{{ o.engagement }}</strong><div class="small muted">{{ o.client }}</div></td><td>{{ status_chip(o.status) }}</td>
+          <td class="num">{{ o.score|score }}</td><td class="muted">{{ o.window_note }}{% if o.file_date %} ({{ o.file_date|date }}){% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+</section>
+{% endif %}
+
+<dialog id="later-addition" aria-labelledby="la-h">
+  <form id="later-addition-form" method="dialog" novalidate>
+    <div class="dialog-head"><h2 id="la-h">Log a documented later addition</h2><button type="button" class="link" data-close>Close</button></div>
+    <input type="hidden" name="id">
+    <p class="muted" id="la-label"></p>
+    <div class="callout">A later addition applies only after the file's SA 230 assembly window has closed, 60 days after the report date. It is recorded with today's date and your reason, shown as a later addition, and cannot be edited, deleted or back-dated. It does not change the score.
+      <div class="small muted" id="la-note" style="margin-top:4px"></div></div>
+    <div class="form-grid">
+      <label class="wide">What was added<textarea name="description" required></textarea></label>
+      <label class="wide">Why it was added after the window closed<textarea name="reason" required></textarea></label>
+      <label>Relates to <span class="hint">optional</span>
+        <select name="dimension"><option value="">Not specific</option>{% for d in dimensions %}<option>{{ d }}</option>{% endfor %}</select></label>
+      <label>Added by <span class="hint">optional</span><input name="added_by"></label>
+    </div>
+    <div class="form-error" hidden></div>
+    <div class="dialog-foot"><button type="button" data-close>Cancel</button><button type="submit" class="primary">Record later addition</button></div>
+  </form>
+</dialog>
+{% endblock %}
+
+{% block scripts %}<script src="/static/scorecard.js"></script>{% endblock %}

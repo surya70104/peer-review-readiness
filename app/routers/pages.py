@@ -1,4 +1,4 @@
-"""Server-rendered screens: 1 · Standing (/) and 4 · Registers (/registers)."""
+"""Server-rendered screens: 1 Standing (/), 2 Scorecard, 3 Likely sample, 4 Registers, 5 Review tracker."""
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -8,7 +8,10 @@ from fastapi.templating import Jinja2Templates
 
 from app import db
 from app.services import profile_service as profiles
+from app.services import readiness_service as readiness
 from app.services import registers_service as registers
+from app.services import review_service as reviews
+from app.services import staff_service as staff
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 templates = Jinja2Templates(directory=str(ROOT / "templates"))
@@ -56,7 +59,33 @@ def _parse_date(s: str | None) -> date | None:
         return None
 
 
-templates.env.filters.update(date=fmt_date, inr=inr, phase=phase_label)
+ROLE_LABELS = {"articled_assistant": "Articled assistant", "audit_assistant": "Audit assistant",
+               "audit_staff": "Audit staff"}
+MODE_LABELS = {"bank_transfer": "Bank transfer", "cheque": "Cheque", "cash": "Cash", "upi": "UPI", "other": "Other"}
+
+
+def fmt_month(v) -> str:
+    return "—" if v is None else f"{v:%b %Y}"
+
+
+def fmt_score(v) -> str:
+    if v is None:
+        return "—"
+    out = f"{float(v):.1f}"
+    return out[:-2] if out.endswith(".0") else out
+
+
+def score_tone(v) -> str:
+    """Display colour only: green from 90, amber from 70, red below."""
+    if v is None:
+        return ""
+    return "ok" if v >= 90 else "warn" if v >= 70 else "danger"
+
+
+templates.env.filters.update(score=fmt_score, tone=score_tone)
+templates.env.filters.update(date=fmt_date, inr=inr, phase=phase_label, month=fmt_month,
+                             role=lambda r: ROLE_LABELS.get(r, r or "—"),
+                             mode=lambda m: MODE_LABELS.get(m, m or "—"))
 
 
 def _months_between(start: date, end: date) -> int:
@@ -103,11 +132,22 @@ def standing(request: Request, as_of: str | None = None):
 
 
 @router.get("/registers")
-def registers_page(request: Request, partner: str | None = None, service: str | None = None):
+def registers_page(request: Request, partner: str | None = None, service: str | None = None,
+                   role: str | None = None, period: str | None = None):
     partner, service = (partner or "").strip() or None, (service or "").strip() or None
+    role, period = (role or "").strip() or None, (period or "").strip() or None
+    if role not in ROLE_LABELS:
+        role = None
+    try:
+        period = staff.parse_month(period).strftime("%Y-%m") if period else None
+    except ValueError:
+        period = None
     with db.get_conn() as conn, registers.dict_cursor(conn) as cur:
         assurance = registers.list_assurance(cur, partner, service)
         sqc = registers.list_sqc(cur)
+        staff_reg = staff.list_staff(cur, role, period)
+        cur.execute("SELECT DISTINCT month FROM staff_compliance ORDER BY month DESC")
+        staff_months = [r["month"] for r in cur.fetchall()]
 
     rows = [s for c in assurance["client_list"] for s in c["services"]]
     partners = sorted({m["partner"] for m in assurance["summary"]["audits_per_member"]})
@@ -119,4 +159,58 @@ def registers_page(request: Request, partner: str | None = None, service: str | 
         "without_udin": sum(1 for r in rows if not r["udin"]),
         "f_partner": partner or "", "f_service": service or "",
         "today": date.today(),
+        "st": staff_reg, "staff_months": staff_months, "roles": ROLE_LABELS, "modes": MODE_LABELS,
+        "f_role": role or "", "f_period": period or "",
+        "current_month": date.today().strftime("%Y-%m"),
+    })
+
+
+# ------------------------------------------------------------ Pass 2 screens
+def _year(v: str | None) -> int | None:
+    try:
+        n = int((v or "").strip())
+    except ValueError:
+        return None
+    return n if 2020 <= n <= 2100 else None
+
+
+@router.get("/scorecard")
+def scorecard_page(request: Request, selection_year: str | None = None):
+    sy = _year(selection_year)
+    with db.get_conn(commit=False) as conn, registers.dict_cursor(conn) as cur:
+        sc = readiness.scorecard(cur, sy)
+    return templates.TemplateResponse(request, "scorecard.html", {
+        "active": "scorecard", "sc": sc, "f_year": sy or "",
+        "assessed": readiness.ASSESSED, "not_assessed": readiness.NOT_ASSESSED,
+        "dimensions": readiness.LATER_ADDITION_DIMENSIONS, "today": date.today(),
+    })
+
+
+@router.get("/likely-sample")
+def likely_sample_page(request: Request, selection_year: str | None = None, limit: str | None = None):
+    sy = _year(selection_year)
+    top = None if (limit or "").lower() == "all" else (int(limit) if (limit or "").isdigit() and 0 < int(limit) <= 1000 else 25)
+    with db.get_conn(commit=False) as conn, registers.dict_cursor(conn) as cur:
+        ls = readiness.likely_sample(cur, top, sy)
+    return templates.TemplateResponse(request, "likely_sample.html", {
+        "active": "sample", "ls": ls, "f_year": sy or "", "f_limit": "all" if top is None else str(top),
+        "weights": readiness.WEIGHTS, "today": date.today(),
+    })
+
+
+@router.get("/tracker")
+def tracker_page(request: Request):
+    today = date.today()
+    with db.get_conn(commit=False) as conn, registers.dict_cursor(conn) as cur:
+        lr = reviews.list_cycles(cur, today)
+        profile = profiles.get_profile(cur)
+        cur.execute("SELECT engagement, client FROM assurance_register ORDER BY engagement")
+        engagements = cur.fetchall()
+        default_year = readiness.resolve_window(cur, profile, None, today)["selection_year"] if profile else today.year + 1
+    open_cycles = [c for c in lr["cycles"] if not c["completed"]]
+    history = [c for c in lr["cycles"] if c["completed"]]
+    return templates.TemplateResponse(request, "tracker.html", {
+        "active": "tracker", "lr": lr, "open_cycles": open_cycles, "history": history,
+        "has_profile": profile is not None, "engagements": engagements, "default_year": default_year,
+        "areas": readiness.REQUIRED_SQC_AREAS, "today": today,
     })

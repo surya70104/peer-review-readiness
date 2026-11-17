@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% block title %}Review tracker{% endblock %}
+{% block content %}
+{% set sm = lr.summary %}
+
+<div class="page-head">
+  <div>
+    <h1>5 · Review tracker</h1>
+    <p class="sub">The live review: the two fifteen-day clocks, the findings and the firm's responses, the reports, and the evidence pack to hand over.</p>
+  </div>
+  <div class="toolbar">
+    <button type="button" class="primary" data-open="#new-cycle" {{ 'disabled' if (open_cycles or not has_profile) }}
+      {% if open_cycles %}title="The {{ open_cycles[0].selection_year }} cycle is still open. Close it first."{% elif not has_profile %}title="Create the firm profile first"{% endif %}>Start new cycle</button>
+  </div>
+</div>
+
+<section class="card pack-card" aria-label="Evidence pack">
+  <div>
+    <h2 style="font-size:19px">Evidence pack</h2>
+    <p class="muted" style="margin-top:4px;max-width:62ch">The whole dossier in one ZIP: the standing profile and its history, the registers, the scorecard and likely sample, and every cycle with its findings. A manifest lists each file with its size and SHA-256. It is generated from live records and records nothing.</p>
+  </div>
+  <a class="btn primary big" id="pack-btn" href="/api/reviews/evidence-pack" download>Download Evidence Pack (.zip)</a>
+</section>
+
+{% if not has_profile %}<div class="banner warn"><strong>No firm profile yet</strong><p>A review cycle belongs to the firm. Create the profile on the <a href="/">Standing</a> screen first.</p></div>{% endif %}
+
+<div class="grid kpis">
+  <div class="kpi"><div class="kpi-label">Cycles</div><div class="kpi-value">{{ sm.total }}</div><div class="kpi-note">{{ sm.open }} open · {{ sm.completed }} closed</div></div>
+  <div class="kpi {{ 'alert' if sm.overdue }}"><div class="kpi-label">Overdue</div><div class="kpi-value">{{ sm.overdue }}</div><div class="kpi-note">cycles past a 15-day deadline</div></div>
+  <div class="kpi {{ 'alert' if sm.due_soon }}"><div class="kpi-label">Due soon</div><div class="kpi-value">{{ sm.due_soon }}</div><div class="kpi-note">escalates {{ lr.escalate_before_days }} days before</div></div>
+  <div class="kpi {{ 'alert' if sm.findings_open }}"><div class="kpi-label">Findings unresolved</div><div class="kpi-value">{{ sm.findings_open }}</div></div>
+</div>
+
+{% for c in open_cycles %}{% include "_cycle.html" %}{% endfor %}
+
+{% if not open_cycles and has_profile %}
+<section class="card placeholder"><h2>No review in progress</h2>
+  <p class="muted" style="margin-top:6px">When the Board's selection letter arrives, or the firm applies early, start a cycle here. The clocks run from the dates recorded, so record the reviewer's consent the day it is given.</p></section>
+{% endif %}
+
+{% if history %}
+<h2 style="font-size:20px;margin-top:8px">Closed cycles</h2>
+{% for c in history %}{% include "_cycle.html" %}{% endfor %}
+{% endif %}
+
+{# ================= dialogs ================= #}
+<dialog id="new-cycle" aria-labelledby="nc-h">
+  <form id="new-cycle-form" method="dialog" novalidate>
+    <div class="dialog-head"><h2 id="nc-h">Start a review cycle</h2><button type="button" class="link" data-close>Close</button></div>
+    <div class="form-grid">
+      <label>Selection year<input type="number" name="selection_year" min="2020" max="2100" required value="{{ default_year }}"></label>
+      <label>Reviewer <span class="hint">optional</span><input name="reviewer"></label>
+      <label>Selection letter received <span class="hint">optional</span><input type="date" name="intimation_at" max="{{ today.isoformat() }}"></label>
+      <label>Reviewer's consent <span class="hint">starts the questionnaire clock</span><input type="date" name="consent_at" max="{{ today.isoformat() }}"></label>
+    </div>
+    <p class="small muted">The review window is the three years before the selection year. The questionnaire is due 15 days after the consent date.</p>
+    <div class="form-error" hidden></div>
+    <div class="dialog-foot"><button type="button" data-close>Cancel</button><button type="submit" class="primary">Start cycle</button></div>
+  </form>
+</dialog>
+
+<dialog id="milestones" aria-labelledby="ms-h">
+  <form id="milestones-form" method="dialog" novalidate>
+    <div class="dialog-head"><h2 id="ms-h">Record milestones</h2><button type="button" class="link" data-close>Close</button></div>
+    <input type="hidden" name="id">
+    <p class="muted" id="ms-label"></p>
+    <div class="form-grid">
+      <label>Reviewer<input name="reviewer"></label>
+      <label>Selection letter received<input type="date" name="intimation_at" max="{{ today.isoformat() }}"></label>
+      <label>Reviewer's consent <span class="hint">clock 1 starts</span><input type="date" name="consent_at" max="{{ today.isoformat() }}"></label>
+      <label>Questionnaire due <span class="hint">consent + 15 days unless you set it</span><input type="date" name="questionnaire_due"></label>
+      <label>Questionnaire and client list sent<input type="date" name="questionnaire_sent" max="{{ today.isoformat() }}"></label>
+      <label>On-site visit <span class="hint">may be scheduled ahead</span><input type="date" name="visit_at"></label>
+      <label>Findings received <span class="hint">clock 2 starts</span><input type="date" name="findings_at" max="{{ today.isoformat() }}"></label>
+      <label>Response due <span class="hint">findings + 15 days unless you set it</span><input type="date" name="response_due"></label>
+      <label>Firm's response sent<input type="date" name="response_sent" max="{{ today.isoformat() }}"></label>
+      <label>Preliminary report received<input type="date" name="preliminary_report_at" max="{{ today.isoformat() }}"></label>
+    </div>
+    <p class="small muted">Only changed dates are sent. A recorded date can be corrected but not cleared, so the record shows what happened.</p>
+    <div class="form-error" hidden></div>
+    <div class="dialog-foot"><button type="button" data-close>Cancel</button><button type="submit" class="primary">Save milestones</button></div>
+  </form>
+</dialog>
+
+<dialog id="close-cycle" aria-labelledby="cc-h">
+  <form id="close-cycle-form" method="dialog" novalidate>
+    <div class="dialog-head"><h2 id="cc-h">Close the cycle: final report</h2><button type="button" class="link" data-close>Close</button></div>
+    <input type="hidden" name="id">
+    <p class="muted" id="cc-label"></p>
+    <div class="callout" id="cc-note"></div>
+    <div class="form-grid">
+      <label>Final report date<input type="date" name="final_report_at" required max="{{ today.isoformat() }}"></label>
+      <label>Outcome
+        <select name="outcome" required><option value="">Choose</option><option value="clean">Clean</option><option value="modified">Modified</option></select></label>
+      <label id="fo-wrap" style="display:none">Follow-on review after <span class="hint">6 to 12 months</span>
+        <select name="follow_on_months">{% for m in range(6, 13) %}<option value="{{ m }}" {{ 'selected' if m == 12 }}>{{ m }} months</option>{% endfor %}</select></label>
+    </div>
+    <p class="small muted">Closing needs the firm's response and the preliminary report recorded, and every finding resolved. It updates the last report on the Standing screen, and a modified report sets the follow-on date. A closed cycle is not edited again.</p>
+    <div class="form-error" hidden></div>
+    <div class="dialog-foot"><button type="button" data-close>Cancel</button><button type="submit" class="primary">Close cycle</button></div>
+  </form>
+</dialog>
+
+<dialog id="add-finding" aria-labelledby="af-h">
+  <form id="add-finding-form" method="dialog" novalidate>
+    <div class="dialog-head"><h2 id="af-h">Add a finding</h2><button type="button" class="link" data-close>Close</button></div>
+    <input type="hidden" name="id">
+    <p class="muted" id="af-label"></p>
+    <div class="form-grid">
+      <label>Control area<input name="control_area" required list="area-list" placeholder="Independence"></label>
+      <label>Engagement <span class="hint">optional</span><input name="engagement" list="engagement-list" placeholder="ENG-2026-002"></label>
+      <label>Severity <span class="hint">optional</span>
+        <select name="severity"><option value="">Not rated</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option></select></label>
+      <label>Response due <span class="hint">blank uses the cycle's clock</span><input type="date" name="due_at"></label>
+      <label>Owner <span class="hint">optional</span><input name="owner"></label>
+      <label>Reference <span class="hint">blank numbers it F-001, F-002…</span><input name="ref"></label>
+      <label class="wide">What the reviewer found<textarea name="description" required></textarea></label>
+    </div>
+    <datalist id="area-list">{% for a in areas %}<option value="{{ a }}">{% endfor %}</datalist>
+    <datalist id="engagement-list">{% for e in engagements %}<option value="{{ e.engagement }}">{{ e.client }}</option>{% endfor %}</datalist>
+    <div class="form-error" hidden></div>
+    <div class="dialog-foot"><button type="button" data-close>Cancel</button><button type="submit" class="primary">Add finding</button></div>
+  </form>
+</dialog>
+
+<dialog id="finding-response" aria-labelledby="fr-h">
+  <form id="finding-response-form" method="dialog" novalidate>
+    <div class="dialog-head"><h2 id="fr-h">Record response &amp; resolve</h2><button type="button" class="link" data-close>Close</button></div>
+    <input type="hidden" name="id">
+    <p class="muted" id="fr-label"></p>
+    <p class="small" id="fr-desc"></p>
+    <div class="form-grid">
+      <label class="wide">The firm's written response<textarea name="pu_response"></textarea></label>
+      <label>Response dated <span class="hint">blank means today</span><input type="date" name="responded_at" max="{{ today.isoformat() }}"></label>
+      <label>Owner<input name="owner"></label>
+      <label class="wide">Corrective action taken<textarea name="corrective_action"></textarea></label>
+      <label class="wide">Resolution <span class="hint">how it was dealt with</span><textarea name="resolution"></textarea></label>
+      <label>Evidence reference <span class="hint">where the evidence is kept</span><input name="evidence_ref"></label>
+      <label>Response due<input type="date" name="due_at"></label>
+      <div class="checks wide"><label><input type="checkbox" name="resolved"><span>Mark as resolved. This needs the response, the corrective action and the resolution, and cannot be reopened.</span></label></div>
+      <label>Resolved on <span class="hint">blank means today</span><input type="date" name="resolved_on" max="{{ today.isoformat() }}"></label>
+    </div>
+    <p class="small muted">Only changed fields are sent. A recorded response can be replaced but not cleared.</p>
+    <div class="form-error" hidden></div>
+    <div class="dialog-foot"><button type="button" data-close>Cancel</button><button type="submit" class="primary">Save</button></div>
+  </form>
+</dialog>
+{% endblock %}
+
+{% block scripts %}<script src="/static/tracker.js"></script>{% endblock %}

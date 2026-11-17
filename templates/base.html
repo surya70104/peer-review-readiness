@@ -15,10 +15,10 @@
       </div>
       <nav aria-label="Screens">
         <a href="/" class="{{ 'active' if active == 'standing' }}" {% if active == 'standing' %}aria-current="page"{% endif %}><span class="n">1</span> Standing</a>
-        <span class="soon" aria-disabled="true" title="Arrives in Pass 2"><span class="n">2</span> Scorecard</span>
-        <span class="soon" aria-disabled="true" title="Arrives in Pass 2"><span class="n">3</span> Likely sample</span>
+        <a href="/scorecard" class="{{ 'active' if active == 'scorecard' }}" {% if active == 'scorecard' %}aria-current="page"{% endif %}><span class="n">2</span> Scorecard</a>
+        <a href="/likely-sample" class="{{ 'active' if active == 'sample' }}" {% if active == 'sample' %}aria-current="page"{% endif %}><span class="n">3</span> Likely sample</a>
         <a href="/registers" class="{{ 'active' if active == 'registers' }}" {% if active == 'registers' %}aria-current="page"{% endif %}><span class="n">4</span> Registers</a>
-        <span class="soon" aria-disabled="true" title="Arrives in Pass 2"><span class="n">5</span> Review tracker</span>
+        <a href="/tracker" class="{{ 'active' if active == 'tracker' }}" {% if active == 'tracker' %}aria-current="page"{% endif %}><span class="n">5</span> Review tracker</a>
       </nav>
     </div>
   </header>

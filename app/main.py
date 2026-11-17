@@ -8,7 +8,7 @@ from pathlib import Path
 
 from fastapi.staticfiles import StaticFiles
 
-from app.routers import pages, profile, registers
+from app.routers import pages, profile, readiness, registers, reviews
 
 
 @asynccontextmanager
@@ -24,6 +24,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="OAK Audit · Peer Review Readiness", lifespan=lifespan)
 app.include_router(profile.router)
 app.include_router(registers.router)
+app.include_router(readiness.router)
+app.include_router(reviews.router)
 app.include_router(pages.router)
 app.mount("/static", StaticFiles(directory=str(Path(__file__).resolve().parent.parent / "static")), name="static")
 

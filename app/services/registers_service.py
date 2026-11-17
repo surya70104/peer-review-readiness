@@ -26,12 +26,15 @@ def dict_cursor(conn):
 # --------------------------------------------------------------------------
 # Assurance register
 # --------------------------------------------------------------------------
+ENTITY_CATEGORIES = ("listed", "level1_pie", "large_unlisted_public", "raised_50cr", "psb_branch", "other")
 ASSURANCE_COLS = ["engagement", "client", "service", "period_from", "period_to",
-                  "partner", "fee", "report_date", "udin"]
+                  "partner", "fee", "report_date", "udin", "entity_category"]
 ASSURANCE_NOT_NULL = {"engagement", "client", "service", "partner"}
 
 
 def _check_assurance(row: dict) -> None:
+    if row.get("entity_category") is not None and row["entity_category"] not in ENTITY_CATEGORIES:
+        raise ValueError("entity_category must be one of: " + ", ".join(ENTITY_CATEGORIES))
     if row["fee"] is not None and row["fee"] < 0:
         raise ValueError("fee must be >= 0")
     if row["period_from"] and row["period_to"] and row["period_to"] < row["period_from"]:
@@ -113,6 +116,7 @@ def list_assurance(cur, partner: str | None = None, service: str | None = None) 
             "engagement": r["engagement"], "service": r["service"], "partner": r["partner"],
             "period_from": r["period_from"], "period_to": r["period_to"],
             "fee": r["fee"], "report_date": r["report_date"], "udin": r["udin"],
+            "entity_category": r["entity_category"],
         })
 
     return {

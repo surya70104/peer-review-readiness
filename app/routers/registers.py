@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app import db
 from app.services import registers_service as svc
+from app.services import staff_service as staff
 
 router = APIRouter(prefix="/api/registers", tags=["registers"])
 
@@ -48,6 +49,7 @@ class AssuranceCreate(_Base):
     fee: Decimal | None = Field(None, ge=0, max_digits=14, decimal_places=2)
     report_date: date | None = None
     udin: str | None = None
+    entity_category: str | None = None
 
 
 class AssuranceUpdate(_Base):
@@ -60,6 +62,7 @@ class AssuranceUpdate(_Base):
     fee: Decimal | None = Field(None, ge=0, max_digits=14, decimal_places=2)
     report_date: date | None = None
     udin: str | None = None
+    entity_category: str | None = None
 
 
 @router.post("/assurance", status_code=201)
@@ -109,3 +112,51 @@ def list_sqc(area: str | None = Query(None)):
 @router.patch("/sqc/{policy_id}")
 def update_sqc(policy_id: int, body: SqcUpdate):
     return _run(svc.update_sqc, policy_id, body.model_dump(exclude_unset=True))
+
+
+# -------------------------------------------------------------------- staff
+class StaffCreate(_Base):
+    person: str = Field(min_length=1)
+    role: str
+    month: str  # "2026-10" (or any date in that month)
+    working_days: int = Field(ge=0, le=31)
+    attendance_days: int = Field(ge=0)
+    registration_no: str | None = None
+    diary_submitted: bool = False
+    stipend_amount: Decimal | None = Field(None, ge=0, max_digits=12, decimal_places=2)
+    stipend_paid_at: date | None = None
+    stipend_mode: str | None = None
+    training_hours: Decimal = Field(Decimal("0"), ge=0, max_digits=6, decimal_places=2)
+    training_required: Decimal = Field(Decimal("0"), ge=0, max_digits=6, decimal_places=2)
+    notes: str | None = None
+
+
+class StaffUpdate(_Base):
+    person: str | None = Field(None, min_length=1)
+    role: str | None = None
+    month: str | None = None
+    working_days: int | None = Field(None, ge=0, le=31)
+    attendance_days: int | None = Field(None, ge=0)
+    registration_no: str | None = None
+    diary_submitted: bool | None = None
+    stipend_amount: Decimal | None = Field(None, ge=0, max_digits=12, decimal_places=2)
+    stipend_paid_at: date | None = None
+    stipend_mode: str | None = None
+    training_hours: Decimal | None = Field(None, ge=0, max_digits=6, decimal_places=2)
+    training_required: Decimal | None = Field(None, ge=0, max_digits=6, decimal_places=2)
+    notes: str | None = None
+
+
+@router.post("/staff", status_code=201)
+def create_staff(body: StaffCreate):
+    return _run(staff.create_staff, body.model_dump())
+
+
+@router.get("/staff")
+def list_staff(role: str | None = Query(None), period: str | None = Query(None)):
+    return _run(staff.list_staff, role, period)
+
+
+@router.patch("/staff/{staff_id}")
+def update_staff(staff_id: int, body: StaffUpdate):
+    return _run(staff.update_staff, staff_id, body.model_dump(exclude_unset=True))

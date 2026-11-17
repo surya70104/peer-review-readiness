@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% from "_macros.html" import meter, gaps, status_chip %}
+{% block title %}Likely sample{% endblock %}
+{% block content %}
+{% set w = ls.window %}
+{% set shown = ls.sample %}
+
+<div class="page-head">
+  <div>
+    <h1>3 · Likely sample</h1>
+    <p class="sub">A ranking of the files a reviewer is likely to examine, with the drivers behind every rank. Rank, not prophecy: the same records always give the same order.</p>
+  </div>
+  <form method="get" action="/likely-sample" class="inline-form" aria-label="Filter the ranking" id="sample-form">
+    <label>Selection year <input type="number" name="selection_year" min="2020" max="2100" value="{{ f_year }}" placeholder="{{ w.selection_year }}" style="width:110px"></label>
+    <label>Show
+      <select name="limit">
+        {% for v, t in (('10', 'Top 10'), ('25', 'Top 25'), ('50', 'Top 50'), ('all', 'All')) %}<option value="{{ v }}" {{ 'selected' if v == f_limit }}>{{ t }}</option>{% endfor %}
+      </select></label>
+    <button type="submit">Apply</button>
+    {% if f_year or f_limit != '25' %}<a class="btn" href="/likely-sample">Reset</a>{% endif %}
+  </form>
+</div>
+
+<div class="banner info">
+  <strong>Inspection window: {{ w['from']|date }} to {{ w.to|date }}</strong>
+  <p>The three years before selection year {{ w.selection_year }}, from the {{ w.source }}. A review looks at files that are already closed, so what can still be fixed is what is open now.</p>
+</div>
+
+<div class="grid kpis">
+  <div class="kpi"><div class="kpi-label">Engagements in window</div><div class="kpi-value">{{ ls.total_in_window }}</div></div>
+  <div class="kpi"><div class="kpi-label">Shown</div><div class="kpi-value">{{ ls.returned }}</div></div>
+  <div class="kpi {{ 'alert' if (shown|selectattr('gaps')|list|length) }}"><div class="kpi-label">Shown with gaps</div><div class="kpi-value">{{ shown|selectattr('gaps')|list|length }}</div><div class="kpi-note">Fix these first</div></div>
+  <div class="kpi"><div class="kpi-label">Outside the window</div><div class="kpi-value">{{ ls.excluded_from_window }}</div></div>
+</div>
+
+<details class="card">
+  <summary>How the 100 points are built</summary>
+  <p class="muted small" style="margin-top:10px">{{ ls.method.note }} Ties are broken by {{ ls.method.order }}.</p>
+  <div class="table-wrap"><table class="driver-table">
+    <thead><tr><th>Driver</th><th class="num">Points</th></tr></thead>
+    <tbody>
+    {% for k, label in (('trigger', "In the category that triggers the firm's phase"), ('level1', 'Level I category'), ('statutory', 'Statutory audit'), ('fee', 'Fee size, a proxy for significance'), ('partner_spread', "Largest engagement of its partner"), ('year_spread', 'Largest engagement of its year'), ('readiness', 'Readiness shortfall'), ('unusual', 'Something unusual: later additions or a high-severity gap')) %}
+      <tr><td>{{ label }}</td><td class="num">up to {{ weights[k] }}</td></tr>
+    {% endfor %}
+    </tbody>
+    <tfoot><tr><td>Total</td><td class="num">{{ ls.method.max_score }}</td></tr></tfoot>
+  </table></div>
+</details>
+
+<section class="rank-list" aria-label="Ranked engagements" id="rank-list">
+  {% for r in shown %}
+  <article class="card rank-item">
+    <div class="rank-badge {{ 'low' if r.risk_score < 20 }}" aria-label="Rank {{ r.rank }}">{{ r.rank }}</div>
+    <div>
+      <div class="rank-title">{{ r.engagement }} · {{ r.client }}</div>
+      <div class="small muted">{{ r.service }} · {{ r.partner }} · {{ r.fee|inr if r.fee is not none else 'Fee not recorded' }} · {{ r.file_date|date }}</div>
+      <div class="driver-chips">
+        {% for d in r.drivers if d.points > 0 %}<span class="chip" title="{{ d.detail }}">{{ d.label }} · {{ d.points|score }}</span>{% endfor %}
+        {% if not (r.drivers|selectattr('points')|list) %}<span class="chip plain">No drivers</span>{% endif %}
+      </div>
+      {% if r.gaps %}<div style="margin-top:10px"><strong class="small">Gaps on this file</strong>{{ gaps(r.gaps) }}</div>{% endif %}
+      {% if r.later_addition_count %}<div class="small" style="margin-top:6px"><span class="chip warn">{{ r.later_addition_count }} later addition{{ '' if r.later_addition_count == 1 else 's' }}</span></div>{% endif %}
+      <details class="inline" style="margin-top:8px"><summary>Why this rank</summary>
+        <ul class="gap-list">{% for reason in r.reasons %}<li><span class="chip ok">+</span><span>{{ reason }}</span></li>{% else %}<li class="muted">Nothing on this file raises its rank.</li>{% endfor %}</ul>
+        <div class="table-wrap"><table class="driver-table">
+          <thead><tr><th>Driver</th><th class="num">Points</th><th class="num">Max</th></tr></thead>
+          <tbody>{% for d in r.drivers %}<tr><td>{{ d.label }}<div class="muted">{{ d.detail }}</div></td><td class="num">{{ d.points|score }}</td><td class="num">{{ d.max_points }}</td></tr>{% endfor %}</tbody>
+        </table></div>
+      </details>
+    </div>
+    <div class="rank-score">
+      <div class="score-mid">{{ r.risk_score|score }}<span class="score-of"> / {{ r.max_score }}</span></div>
+      <div class="small muted" style="margin-bottom:6px">Risk score</div>
+      {{ meter(r.risk_score, r.max_score) }}
+      <div style="margin-top:8px" class="small">Readiness {{ r.readiness_score|score }} {{ status_chip(r.status) }}</div>
+    </div>
+  </article>
+  {% else %}
+  <div class="card placeholder"><p class="muted">No engagements fall in this window, so there is nothing to rank. Choose a later selection year, or record report dates on the Registers screen.</p></div>
+  {% endfor %}
+</section>
+{% if shown %}<p class="small muted"><button type="button" class="link" id="toggle-all">Expand all reasons</button></p>{% endif %}
+{% endblock %}
+
+{% block scripts %}<script src="/static/likely_sample.js"></script>{% endblock %}

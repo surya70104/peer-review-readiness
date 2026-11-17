@@ -1,0 +1,114 @@
+{# One review cycle. Included in a loop that sets `c`. #}
+{% from "_macros.html" import clock_chip, sev_chip, finding_chip %}
+{% set fc = c.finding_counts %}
+<section class="card cycle" id="cycle-{{ c.id }}" aria-labelledby="cy{{ c.id }}-h">
+  <div class="cycle-head">
+    <div>
+      <h2 id="cy{{ c.id }}-h" style="font-size:20px">{{ c.selection_year }} review cycle</h2>
+      <p class="small muted">Reviewer: {{ c.reviewer or 'not yet appointed' }} · Window {{ c.period_from|date }} to {{ c.period_to|date }}{% if c.intimation_at %} · Selected {{ c.intimation_at|date }}{% endif %}</p>
+      <div class="chips">
+        {% if c.completed %}
+          <span class="chip ok">Closed {{ c.final_report_at|date }}</span>
+          {% if c.outcome == 'modified' %}<span class="chip warn">Modified report</span>{% else %}<span class="chip ok">Clean report</span>{% endif %}
+        {% else %}
+          {{ clock_chip(c.deadline_status) }}<span class="chip">{{ c.stage_label }}</span>
+        {% endif %}
+      </div>
+    </div>
+    {% if not c.completed %}
+    <div class="actions">
+      <button type="button" data-open="#milestones"
+        data-fill='{{ {"id": c.id, "label": c.selection_year|string ~ " cycle", "reviewer": c.reviewer or "", "intimation_at": c.intimation_at.isoformat() if c.intimation_at else "", "consent_at": c.consent_at.isoformat() if c.consent_at else "", "questionnaire_due": c.questionnaire_due.isoformat() if c.questionnaire_due else "", "questionnaire_sent": c.questionnaire_sent.isoformat() if c.questionnaire_sent else "", "visit_at": c.visit_at.isoformat() if c.visit_at else "", "findings_at": c.findings_at.isoformat() if c.findings_at else "", "response_due": c.response_due.isoformat() if c.response_due else "", "response_sent": c.response_sent.isoformat() if c.response_sent else "", "preliminary_report_at": c.preliminary_report_at.isoformat() if c.preliminary_report_at else ""}|tojson }}'>Record milestones</button>
+      <button type="button" data-open="#close-cycle"
+        data-fill='{{ {"id": c.id, "label": c.selection_year|string ~ " cycle", "note": ("Not yet: " ~ ((fc.open + fc.responded)|string) ~ " finding(s) are unresolved.") if (fc.open + fc.responded) else "All findings are resolved."}|tojson }}'>Close cycle</button>
+    </div>
+    {% endif %}
+  </div>
+
+  <ol class="stepper" aria-label="Stages">
+    {% for s in c.stages %}
+      <li class="step {{ 'done' if s.done }} {{ 'current' if c.stage == s.key }} {{ 'scheduled' if s.scheduled }}">{{ s.label }}
+        <span class="when">{% if s.date %}{{ s.date|date }}{% if s.scheduled %} (scheduled){% endif %}{% else %}&nbsp;{% endif %}</span></li>
+    {% endfor %}
+  </ol>
+
+  <div class="clocks">
+    {% for key in ('questionnaire', 'response') %}
+    {% set k = c.clocks[key] %}
+    <div class="clock {{ k.status }}" id="clock-{{ c.id }}-{{ key }}">
+      <div class="cycle-head"><strong>{{ k.label }}</strong>{{ clock_chip(k.status, k.days_late) }}</div>
+      <div class="small muted">{{ k.rule }}</div>
+      {% if k.status == 'not_started' %}
+        <div class="clock-days muted">Not started</div>
+        <div class="small">{{ "Starts when the reviewer's consent date is recorded." if key == 'questionnaire' else "Starts when the date the findings were received is recorded." }}</div>
+      {% elif k.status == 'completed' %}
+        <div class="clock-days">Done {{ k.done_on|date }}</div>
+        <div class="small">{{ 'On time.' if not k.days_late else (k.days_late|string ~ ' day' ~ ('' if k.days_late == 1 else 's') ~ ' late.') }}</div>
+      {% elif k.status == 'overdue' %}
+        <div class="clock-days">{{ -k.days_remaining }} day{{ '' if k.days_remaining == -1 else 's' }} overdue</div>
+      {% else %}
+        <div class="clock-days">{{ k.days_remaining }} day{{ '' if k.days_remaining == 1 else 's' }} left</div>
+      {% endif %}
+      {% if k.starts_on %}
+      <dl class="facts">
+        <dt>Starts</dt><dd>{{ k.starts_on|date }}</dd>
+        <dt>Due</dt><dd>{{ k.due|date }} <span class="muted small">({{ k.due_basis }})</span></dd>
+        {% if k.status in ('on_track', 'due_soon', 'overdue') %}<dt>Escalates from</dt><dd>{{ k.escalate_from|date }}</dd>{% endif %}
+      </dl>
+      {% endif %}
+      {% if k.contents %}
+      <details class="inline"><summary>What is due</summary>
+        <ul>{% for item in k.contents %}<li>{{ item }}</li>{% endfor %}</ul>
+        <p class="small muted" style="margin-top:6px">The client and fee list is on the <a href="/registers">Registers</a> screen and is already current.</p>
+      </details>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+
+  <div>
+    <div class="section-head" style="margin-bottom:8px">
+      <div><h3>Findings</h3>
+        <p class="small">{{ fc.total }} total · {{ fc.open }} open · {{ fc.responded }} responded · {{ fc.resolved }} resolved{% if fc.overdue %} · <strong style="color:var(--danger)">{{ fc.overdue }} overdue</strong>{% endif %}</p></div>
+      {% if not c.completed %}
+        <button type="button" data-open="#add-finding" {{ 'disabled' if not c.findings_at }}
+          {% if not c.findings_at %}title="Record the date the findings were received first"{% endif %}
+          data-fill='{{ {"id": c.id, "label": c.selection_year|string ~ " cycle"}|tojson }}'>Add finding</button>
+      {% endif %}
+    </div>
+    {% if not c.completed and not c.findings_at %}<p class="small muted">Record the date the findings were received, under Record milestones, to start the 15-day response clock. Then findings can be logged.</p>{% endif %}
+    {% if c.findings %}
+    <div class="table-wrap"><table>
+      <thead><tr><th>Ref</th><th>Area</th><th>Finding</th><th>Severity</th><th>Status</th><th>Due</th><th>Owner</th><th></th></tr></thead>
+      <tbody>
+      {% for f in c.findings %}
+        <tr id="finding-{{ f.id }}">
+          <td class="nowrap"><strong>{{ f.ref }}</strong></td>
+          <td>{{ f.control_area }}{% if f.engagement %}<div class="small muted">{{ f.engagement }}</div>{% endif %}</td>
+          <td>{{ f.description }}
+            {% if f.pu_response or f.resolution or f.corrective_action or f.evidence_ref %}
+            <details class="inline"><summary>Firm's response</summary>
+              {% if f.pu_response %}<div class="small"><strong>Response{% if f.responded_at %} ({{ f.responded_at|date }}){% endif %}:</strong> {{ f.pu_response }}{% if f.response_late %} <span class="chip warn">Late</span>{% endif %}</div>{% endif %}
+              {% if f.corrective_action %}<div class="small"><strong>Corrective action:</strong> {{ f.corrective_action }}</div>{% endif %}
+              {% if f.resolution %}<div class="small"><strong>Resolution:</strong> {{ f.resolution }}</div>{% endif %}
+              {% if f.evidence_ref %}<div class="small"><strong>Evidence:</strong> {{ f.evidence_ref }}</div>{% endif %}
+            </details>{% endif %}
+          </td>
+          <td>{% if f.severity %}{{ sev_chip(f.severity) }}{% else %}<span class="muted small">—</span>{% endif %}</td>
+          <td>{{ finding_chip(f.status) }}{% if f.closed_at %}<div class="small muted">{{ f.closed_at|date }}</div>{% endif %}</td>
+          <td class="nowrap">{{ f.due|date }}{% if f.overdue %}<div><span class="chip danger">Overdue</span></div>{% endif %}</td>
+          <td>{{ f.owner or '—' }}</td>
+          <td class="nowrap">{% if not c.completed and f.status != 'resolved' %}<button type="button" class="link" data-open="#finding-response"
+            data-fill='{{ {"id": f.id, "label": f.ref ~ " · " ~ f.control_area, "pu_response": f.pu_response or "", "responded_at": f.responded_at.isoformat() if f.responded_at else "", "corrective_action": f.corrective_action or "", "resolution": f.resolution or "", "evidence_ref": f.evidence_ref or "", "owner": f.owner or "", "due_at": f.due_at.isoformat() if f.due_at else "", "description": f.description}|tojson }}'>Respond &amp; resolve</button>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    {% elif c.findings_at %}<p class="muted small">No findings logged for this cycle.</p>{% endif %}
+  </div>
+
+  {% if c.completed and c.outcome == 'modified' %}
+  <div class="callout">A modified final report brings a follow-on review.
+    {% if c.follow_on and c.follow_on.linked_to_profile %}It is on the Standing screen: due <strong>{{ c.follow_on.due|date }}</strong>.{% else %}This report is older than the one on the Standing screen, so it is not linked to its follow-on date.{% endif %}</div>
+  {% endif %}
+</section>

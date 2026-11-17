@@ -44,6 +44,12 @@
     if (b) $("#ee-label").textContent = JSON.parse(b.dataset.fill).label;
     const c = e.target.closest('[data-open="#record-sqc"]');
     if (c) $("#rs-label").textContent = JSON.parse(c.dataset.fill).label;
+    const st = e.target.closest('[data-open="#edit-staff"]');
+    if (st) {
+      const v = JSON.parse(st.dataset.fill);
+      $("#est-label").textContent = v.label;
+      $("#edit-staff-form").diary_submitted.checked = !!v.diary_submitted;
+    }
   });
   wire("#edit-engagement-form", (f) => ({
     method: "PATCH",
@@ -76,6 +82,39 @@
     if (ev) body.evidence_of_operation = ev;
     if (!Object.keys(body).length) return "Enter who acknowledged it, or the evidence of operation.";
     return { method: "PATCH", url: "/api/registers/sqc/" + f.id.value, body, message: "Policy updated." };
+  });
+
+  // ---- staff compliance: add / update
+  const numOrNull = (v) => (v === "" ? null : Number(v));
+  wire("#add-staff-form", (f) => {
+    const body = {
+      person: f.person.value.trim(), role: f.role.value, month: f.month.value,
+      working_days: numOrNull(f.working_days.value), attendance_days: numOrNull(f.attendance_days.value),
+      diary_submitted: f.diary_submitted.checked,
+      training_hours: Number(f.training_hours.value || 0), training_required: Number(f.training_required.value || 0),
+    };
+    if (!body.person || !body.month) return "Person and month are required.";
+    if (body.working_days === null || body.attendance_days === null) return "Working days and days attended are required.";
+    for (const k of ["registration_no", "stipend_paid_at", "stipend_mode", "notes"]) {
+      const v = blankToNull(f[k].value);
+      if (v !== null) body[k] = v;
+    }
+    if (f.stipend_amount.value !== "") body.stipend_amount = Number(f.stipend_amount.value);
+    return { method: "POST", url: "/api/registers/staff", body, message: "Staff record added." };
+  });
+  wire("#edit-staff-form", (f) => {
+    const body = {
+      working_days: numOrNull(f.working_days.value), attendance_days: numOrNull(f.attendance_days.value),
+      diary_submitted: f.diary_submitted.checked,
+      stipend_amount: numOrNull(f.stipend_amount.value),
+      stipend_paid_at: blankToNull(f.stipend_paid_at.value),
+      stipend_mode: blankToNull(f.stipend_mode.value),
+      training_hours: numOrNull(f.training_hours.value), training_required: numOrNull(f.training_required.value),
+      notes: blankToNull(f.notes.value),
+    };
+    if (body.working_days === null || body.attendance_days === null) return "Working days and days attended are required.";
+    if (body.training_hours === null || body.training_required === null) return "Training hours are required (use 0 for none).";
+    return { method: "PATCH", url: "/api/registers/staff/" + f.id.value, body, message: "Staff record updated." };
   });
 
   // ---- CSV export of the list currently shown (same data the questionnaire needs)

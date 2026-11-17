@@ -1,0 +1,37 @@
+{# Shared bits for the Pass 2 screens. #}
+
+{% macro clock_chip(status, days_late=0) -%}
+  {%- if status == 'on_track' %}<span class="chip ok">On track</span>
+  {%- elif status == 'due_soon' %}<span class="chip warn">Due soon</span>
+  {%- elif status == 'overdue' %}<span class="chip danger">Overdue</span>
+  {%- elif status == 'completed' %}{% if days_late %}<span class="chip warn">Completed late</span>{% else %}<span class="chip ok">Completed</span>{% endif %}
+  {%- else %}<span class="chip plain">Not started</span>{% endif -%}
+{%- endmacro %}
+
+{% macro sev_chip(sev) -%}
+  <span class="chip {{ 'danger' if sev == 'high' else 'warn' if sev == 'medium' else 'plain' }}">{{ sev|capitalize }}</span>
+{%- endmacro %}
+
+{% macro status_chip(status) -%}
+  {%- if status == 'ready' %}<span class="chip ok">Ready</span>
+  {%- elif status == 'open' %}<span class="chip plain">Open work</span>
+  {%- elif status == 'needs_attention' %}<span class="chip warn">Needs attention</span>
+  {%- elif status == 'at_risk' %}<span class="chip danger">At risk</span>
+  {%- else %}<span class="chip plain">{{ status }}</span>{% endif -%}
+{%- endmacro %}
+
+{% macro finding_chip(status) -%}
+  {%- if status == 'resolved' %}<span class="chip ok">Resolved</span>
+  {%- elif status == 'responded' %}<span class="chip">Responded</span>
+  {%- else %}<span class="chip warn">Open</span>{% endif -%}
+{%- endmacro %}
+
+{% macro meter(value, max=100) -%}
+  <div class="meter {{ value|tone }}" role="img" aria-label="{{ value|score }} out of {{ max }}"><span style="width: {{ [[(value or 0) * 100 / max, 0]|max, 100]|min }}%"></span></div>
+{%- endmacro %}
+
+{% macro gaps(items) -%}
+  {% if items %}<ul class="gap-list">
+    {% for g in items %}<li>{{ sev_chip(g.severity) }}<span>{{ g.message }}</span></li>{% endfor %}
+  </ul>{% endif %}
+{%- endmacro %}

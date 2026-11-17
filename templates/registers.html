@@ -54,6 +54,8 @@
       </div>
     </div>
     <form method="get" action="/registers" class="inline-form" style="margin:12px 0" aria-label="Filter the register">
+      {% if f_role %}<input type="hidden" name="role" value="{{ f_role }}">{% endif %}
+      {% if f_period %}<input type="hidden" name="period" value="{{ f_period }}">{% endif %}
       <label>Partner
         <select name="partner"><option value="">All partners</option>
           {% for p in partners %}<option value="{{ p }}" {{ 'selected' if p|lower == f_partner|lower }}>{{ p }}</option>{% endfor %}
@@ -129,12 +131,132 @@
   </div>
 </section>
 
-<section class="card placeholder" aria-labelledby="st-h">
-  <h2 id="st-h">Staff compliance registers</h2>
-  <p class="muted">Articled and audit assistants' attendance, work diaries, stipend payments and training hours arrive in <strong>Pass 2 · Stage 5</strong>. They count toward the readiness score, so they will not be optional.</p>
+{# ================= staff compliance ================= #}
+<section aria-labelledby="st-h" class="grid">
+  <div class="section-head">
+    <div><h2 id="st-h" style="font-size:20px">Staff compliance register</h2>
+    <p>Articled and audit assistants: attendance, work diaries, stipend payments and training, by person and month. These count toward the readiness score.</p></div>
+    <button type="button" class="primary" data-open="#add-staff">Add record</button>
+  </div>
+  {% set t = st.summary %}
+  <div class="grid kpis">
+    <div class="kpi"><div class="kpi-label">Staff tracked</div><div class="kpi-value">{{ t.total_staff }}</div></div>
+    <div class="kpi {{ 'alert' if t.non_compliant_count }}">
+      <div class="kpi-label">Compliance rate</div>
+      <div class="kpi-value">{% if t.compliance_rate is none %}—{% else %}{{ t.compliance_rate|round|int }}%{% endif %}</div>
+      <div class="kpi-note">{{ t.compliant_count }} of {{ t.total_staff }} people with no open flag</div>
+    </div>
+    <div class="kpi {{ 'alert' if t.flag_counts.missing_work_diary }}"><div class="kpi-label">Work diary missing</div><div class="kpi-value">{{ t.flag_counts.missing_work_diary }}</div><div class="kpi-note">records</div></div>
+    <div class="kpi {{ 'alert' if t.flag_counts.stipend_unpaid or t.flag_counts.stipend_not_recorded }}">
+      <div class="kpi-label">Stipend unpaid</div><div class="kpi-value">{{ t.flag_counts.stipend_unpaid + t.flag_counts.stipend_not_recorded }}</div>
+      <div class="kpi-note">{{ t.flag_counts.stipend_unpaid }} unpaid, {{ t.flag_counts.stipend_not_recorded }} not recorded</div>
+    </div>
+    <div class="kpi {{ 'alert' if t.flag_counts.training_below_requirement }}"><div class="kpi-label">Training shortfall</div><div class="kpi-value">{{ t.flag_counts.training_below_requirement }}</div><div class="kpi-note">records below required hours</div></div>
+  </div>
+
+  <div class="card">
+    <form method="get" action="/registers" class="inline-form" style="margin:0 0 12px" aria-label="Filter the staff register">
+      {% if f_partner %}<input type="hidden" name="partner" value="{{ f_partner }}">{% endif %}
+      {% if f_service %}<input type="hidden" name="service" value="{{ f_service }}">{% endif %}
+      <label>Role
+        <select name="role"><option value="">All roles</option>
+          {% for key, label in roles.items() %}<option value="{{ key }}" {{ 'selected' if key == f_role }}>{{ label }}</option>{% endfor %}
+        </select>
+      </label>
+      <label>Month
+        <select name="period"><option value="">All months</option>
+          {% for m in staff_months %}<option value="{{ m.strftime('%Y-%m') }}" {{ 'selected' if m.strftime('%Y-%m') == f_period }}>{{ m|month }}</option>{% endfor %}
+        </select>
+      </label>
+      <button type="submit">Filter</button>
+      {% if f_role or f_period %}<a class="btn" href="/registers{{ '?partner=' ~ f_partner|urlencode if f_partner }}{{ ('&' if f_partner else '?') ~ 'service=' ~ f_service|urlencode if f_service }}">Clear</a>{% endif %}
+    </form>
+    <div class="table-wrap">
+      <table id="staff-table">
+        <thead><tr><th>Person</th><th>Month</th><th class="num">Attendance</th><th>Work diary</th><th>Stipend</th><th class="num">Training (h)</th><th>Status</th><th></th></tr></thead>
+        <tbody>
+        {% for r in st.records %}
+          <tr>
+            <td><strong>{{ r.person }}</strong><div class="small muted">{{ r.role|role }}{% if r.registration_no %} · {{ r.registration_no }}{% endif %}</div></td>
+            <td class="nowrap">{{ r.month|month }}</td>
+            <td class="num nowrap">{{ r.attendance_days }} / {{ r.working_days }}</td>
+            <td>{% if r.diary_submitted %}<span class="chip ok">Submitted</span>{% elif r.role == 'audit_staff' %}<span class="chip plain">Not required</span>{% else %}<span class="chip warn">Missing</span>{% endif %}</td>
+            <td>
+              {% if r.role == 'audit_staff' and r.stipend_amount is none %}<span class="chip plain">Not applicable</span>
+              {% elif r.stipend_amount is none %}<span class="chip warn">Not recorded</span>
+              {% else %}{{ r.stipend_amount|inr }}
+                {% if r.stipend_paid_at %}<div class="small muted">Paid {{ r.stipend_paid_at|date }} · {{ r.stipend_mode|mode }}</div>
+                {% elif r.stipend_amount > 0 %}<div><span class="chip warn">Unpaid</span></div>{% endif %}
+              {% endif %}
+            </td>
+            <td class="num nowrap">{{ r.training_hours|round(1) }} / {{ r.training_required|round(1) }}</td>
+            <td>{% if r.compliant %}<span class="chip ok">Compliant</span>{% else %}<div class="chips" style="margin:0">{% for f in r.flags %}<span class="chip warn">{{ f.label }}</span>{% endfor %}</div>{% endif %}</td>
+            <td class="nowrap"><button type="button" class="link" data-open="#edit-staff"
+              data-fill='{{ {"id": r.id, "label": r.person ~ " · " ~ (r.month|month), "working_days": r.working_days, "attendance_days": r.attendance_days, "diary_submitted": r.diary_submitted, "stipend_amount": (r.stipend_amount|string if r.stipend_amount is not none else ""), "stipend_paid_at": (r.stipend_paid_at.isoformat() if r.stipend_paid_at else ""), "stipend_mode": r.stipend_mode or "", "training_hours": r.training_hours|string, "training_required": r.training_required|string, "notes": r.notes or ""}|tojson }}'>Edit</button></td>
+          </tr>
+        {% else %}
+          <tr><td colspan="8" class="muted">{% if f_role or f_period %}No records match this filter.{% else %}No staff records yet. Add the first one.{% endif %}</td></tr>
+        {% endfor %}
+        </tbody>
+        {% if st.records %}<tfoot><tr><td colspan="8">{{ st.filtered_count }} record{{ '' if st.filtered_count == 1 else 's' }}{% if f_role or f_period %} shown{% endif %}</td></tr></tfoot>{% endif %}
+      </table>
+    </div>
+    <p class="small muted" style="margin:10px 0 0">Articled and audit assistants need a submitted work diary and a paid, recorded stipend. Salaried audit staff are checked on training only. A person stays non-compliant while any of their records has an open flag.</p>
+  </div>
 </section>
 
 {# ================= dialogs ================= #}
+<dialog id="add-staff" aria-labelledby="ast-h">
+  <form id="add-staff-form" method="dialog" novalidate>
+    <div class="dialog-head"><h2 id="ast-h">Add staff compliance record</h2><button type="button" class="link" data-close>Close</button></div>
+    <div class="form-grid">
+      <label>Person<input name="person" required list="staff-list"></label>
+      <label>Role
+        <select name="role" required>{% for key, label in roles.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select>
+      </label>
+      <label>Registration / employee ID <span class="hint">optional</span><input name="registration_no"></label>
+      <label>Month<input type="month" name="month" required value="{{ current_month }}" max="{{ current_month }}"></label>
+      <label>Working days<input type="number" name="working_days" min="0" max="31" step="1" required></label>
+      <label>Days attended<input type="number" name="attendance_days" min="0" max="31" step="1" required></label>
+      <label>Stipend (₹) <span class="hint">due for the month</span><input type="number" name="stipend_amount" min="0" step="0.01"></label>
+      <label>Stipend paid on <span class="hint">blank if unpaid</span><input type="date" name="stipend_paid_at"></label>
+      <label>Mode of payment
+        <select name="stipend_mode"><option value="">Not paid</option>{% for key, label in modes.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select>
+      </label>
+      <label>Training done (h)<input type="number" name="training_hours" min="0" step="0.25" value="0"></label>
+      <label>Training required (h)<input type="number" name="training_required" min="0" step="0.25" value="0"></label>
+      <div class="checks wide"><label><input type="checkbox" name="diary_submitted"><span>Work diary submitted</span></label></div>
+      <label class="wide">Notes / evidence <span class="hint">optional</span><textarea name="notes"></textarea></label>
+    </div>
+    <datalist id="staff-list">{% for p in st.summary.people %}<option value="{{ p.person }}">{% endfor %}</datalist>
+    <div class="form-error" hidden></div>
+    <div class="dialog-foot"><button type="button" data-close>Cancel</button><button type="submit" class="primary">Add record</button></div>
+  </form>
+</dialog>
+
+<dialog id="edit-staff" aria-labelledby="est-h">
+  <form id="edit-staff-form" method="dialog" novalidate>
+    <div class="dialog-head"><h2 id="est-h">Update staff record</h2><button type="button" class="link" data-close>Close</button></div>
+    <input type="hidden" name="id">
+    <p class="muted" id="est-label"></p>
+    <div class="form-grid">
+      <label>Working days<input type="number" name="working_days" min="0" max="31" step="1" required></label>
+      <label>Days attended<input type="number" name="attendance_days" min="0" max="31" step="1" required></label>
+      <label>Stipend (₹)<input type="number" name="stipend_amount" min="0" step="0.01"></label>
+      <label>Stipend paid on<input type="date" name="stipend_paid_at"></label>
+      <label>Mode of payment
+        <select name="stipend_mode"><option value="">Not paid</option>{% for key, label in modes.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}</select>
+      </label>
+      <label>Training done (h)<input type="number" name="training_hours" min="0" step="0.25"></label>
+      <label>Training required (h)<input type="number" name="training_required" min="0" step="0.25"></label>
+      <div class="checks wide"><label><input type="checkbox" name="diary_submitted"><span>Work diary submitted</span></label></div>
+      <label class="wide">Notes / evidence<textarea name="notes"></textarea></label>
+    </div>
+    <div class="form-error" hidden></div>
+    <div class="dialog-foot"><button type="button" data-close>Cancel</button><button type="submit" class="primary">Save</button></div>
+  </form>
+</dialog>
+
 <dialog id="add-engagement" aria-labelledby="ae-h">
   <form id="add-engagement-form" method="dialog" novalidate>
     <div class="dialog-head"><h2 id="ae-h">Add assurance engagement</h2><button type="button" class="link" data-close>Close</button></div>
